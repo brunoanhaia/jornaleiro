@@ -86,12 +86,23 @@ conta do clube Examine — com ele o encarte do Examine vem do jornal oficial do
 .venv/bin/jornais site-precos --max-categorias 2   # varredura parcial
 ```
 
+```bash
+# retencao: apaga coletas de data/ mais velhas que 30 dias (--dry-run so lista)
+.venv/bin/jornais limpar --dias 30
+.venv/bin/jornais limpar --dias 30 --dry-run
+```
+
 Opções de `run`: `--only k1,k2`, `--renderer auto|playwright|jina`, `--no-send`,
 `--sem-comprimir`, `--sem-ocr`, `--sem-precos` (só os jornais: não lê nem envia preços),
-`--data-dir DIR`, `--config ARQUIVO`. Mercados e URLs ficam em `config.toml`.
+`--data-dir DIR`, `--config ARQUIVO`. Mercados e URLs ficam em `config.toml`, procurado
+nesta ordem: `--config`, `$JORNAIS_CONFIG`, `./config.toml` e a raiz do repositório; um
+`data_dir` relativo no config é resolvido ao lado dele. Tudo roda igual como
+`python -m jornais ...`.
 
 Saída: `data/<AAAA-MM-DD>/<mercado>.pdf` (um por mercado, sobrescrito se rodar duas
-vezes no mesmo dia) e os arquivos brutos em `data/<AAAA-MM-DD>/raw/`.
+vezes no mesmo dia) e os arquivos brutos em `data/<AAAA-MM-DD>/raw/`. O `run` também
+espelha o terminal em `data/<AAAA-MM-DD>/run.log`, com um cabeçalho por execução
+(o arquivo é acrescentado, não sobrescrito).
 
 Códigos de saída: `0` mesmo com um mercado falhando, `1` se **todos** os mercados
 selecionados falharem (ou nenhum PDF sair), `2` para erro de configuração
@@ -102,13 +113,15 @@ lidos — e o resumo de falhas:
 
 ```
 Encartes Rio Claro - 15/10/2026
-Assaí Atacadista - 8 pags - Preços válidos para 15/10/2026 | 13 itens/15 precos (OCR)
-Atacadão - 6 folhetos - 12/10 a 19/10 | 224 itens/486 precos
+Assaí Atacadista - 8 pags - Preços válidos para 15/10/2026 | 12 itens/16 precos (OCR)
+Atacadão - 6 folhetos - 12/10 a 19/10 | 237 itens/554 precos
 Covabra - 4 pags - 15/10 - 21/10 | 169 itens/176 precos
 Savegnago - 4 pags - válido até 17/10/2026 | 180 itens/261 precos
 Examine - 1 pag - 15/10 a 18/10/2026 | OCR nao leu nenhum preco
 Falhas: nenhuma
 ```
+
+(contagens remedidas em 18/10/2026, com os encartes de 15/10.)
 
 Cada PDF vai como documento com a legenda `<mercado> - <validade> - <n> pags`
 (ou `<n> folhetos`, no caso do Atacadão); logo depois de cada PDF vai o CSV da leitura
@@ -180,19 +193,26 @@ não misturar folhetos de execuções anteriores.
 
 `jornais precos` lê os preços dos PDFs já baixados em `data/<dia>/` (não baixa nada de
 novo) e grava `data/<dia>/precos/<mercado>.csv` e `<mercado>.json`, com as colunas
-`mercado;pagina;produto;preco;ordem`.
+`mercado;pagina;produto;preco;ordem;tipo` (o CSV sai com BOM, `utf-8-sig`, para abrir
+direto no Excel pt-BR).
 
-| Mercado | Como o preço é lido | Resultado em 15/10/2026 |
+| Mercado | Como o preço é lido | Resultado nos encartes de 15/10/2026 (medido em 18/10) |
 |---|---|---|
-| Atacadão | camada de texto do PDF | 486 preços (224 itens) |
+| Atacadão | camada de texto do PDF | 554 preços (237 itens) |
 | Savegnago | camada de texto do PDF | 261 preços (180 itens) |
 | Covabra | camada de texto do PDF | 176 preços (169 itens) |
-| Assaí | **OCR** (encarte em JPEG) | 15 preços (13 itens) |
+| Assaí | **OCR** (encarte em JPEG) | 16 preços (12 itens) |
 | Examine | **catálogo do site** (GraphQL) | 11.124 produtos com preço (4.408 com desconto) |
 
-A leitura casa a descrição impressa com os preços que vêm logo depois dela; `ordem`
-é a posição do preço dentro do item, porque o encarte publica vários preços por
-produto (o Atacadão traz varejo/atacado, app e cartão; o Savegnago traz "de/por").
+A leitura casa a descrição impressa com os preços que vêm logo depois dela (ou **antes**,
+no hortifruti do Atacadão); `ordem` é a posição do preço dentro do item, porque o
+encarte publica vários preços por produto (o Atacadão traz varejo/atacado, app e cartão;
+o Savegnago traz "de/por"). A coluna `tipo` tenta dizer o **papel** de cada preço por
+heurística de valor — o encarte publica do maior para o menor: no Atacadão, bloco de 3
+preços vira `varejo/atacado`, `app`, `app/cartao` (bloco de 2, `varejo/atacado` +
+`app`); no Savegnago/Covabra, bloco de 2 vira `cheio` + `clube`; blocos de tamanho
+inesperado (itens fundidos pela ordem de leitura do PDF) e mercados sem padrão
+conhecido ficam com `tipo` vazio. É inferência medida, não rótulo lido do PDF.
 
 ### OCR dos encartes em imagem
 
@@ -206,17 +226,23 @@ não existir, `jornais run` e `jornais precos` seguem funcionando e o resumo diz
 
 Limitações conhecidas, todas verificadas nos encartes de hoje: no Atacadão/Covabra/
 Savegnago o nome vem do texto impresso (quando o próprio PDF perde um glifo, sai torto
-— ex.: `Arroz po 1` em vez de `Arroz tipo 1`) e preço sem descrição antes dele fica com
-`produto` vazio (4 de 923 linhas); `ordem` não diz **qual** preço é varejo, app ou
-cartão; no Assaí o OCR acha poucos preços e as descrições saem truncadas/ruidosas (só
-as linhas com palavra real e pouco lixo entram); o encarte em imagem do Examine não é
-lido por OCR (é arte com preço estilizado) — para esse mercado a leitura vem do
-catálogo do site, abaixo. Os PDFs continuam no `data/<dia>/` para conferência.
+— ex.: `Arroz po 1` em vez de `Arroz tipo 1`); o preço desenhado **antes** do nome
+(hortifruti do Atacadão) fica pendente e é atribuído ao item quando a descrição
+aparece — zero linhas com `produto` vazio nos encartes de 15/10 (antes eram 4) —, mas
+nessa região a arte emite `[rótulos][preços][nome]`, então os preços de itens vizinhos
+podem trocar de dono; `tipo` é heurística de valor, não rótulo lido; no Assaí o OCR
+acha poucos preços e as descrições saem truncadas/ruidosas (só as linhas com palavra
+real e pouco lixo entram); o encarte em imagem do Examine não é lido por OCR (é arte
+com preço estilizado) — para esse mercado a leitura vem do catálogo do site, abaixo.
+Os PDFs continuam no `data/<dia>/` para conferência.
 
 `jornais run` também lê os preços do PDF que acabou de gerar, grava os mesmos
 `data/<dia>/precos/<mercado>.csv|json`, põe a contagem na mensagem do Telegram
-(uma linha por mercado, `| 224 itens/486 precos`, com `(OCR)` quando veio de OCR) e
-manda o CSV como documento logo depois do PDF do mercado. `enviar = false` em
+(uma linha por mercado, ex.: `| 237 itens/554 precos`) e manda o CSV como documento
+logo depois do PDF do mercado. O marcador de fonte aparece quando a leitura não veio
+da camada de texto pura: `(OCR)`, `(texto+OCR)` ou `(OCR indisponivel em parte)` (um
+arquivo do mercado ficou sem OCR); se a leitura falhar, a linha vira
+`precos: falha (motivo)` e o PDF do mercado ainda é enviado. `enviar = false` em
 `[precos]` desliga só o envio dos CSVs. `ler = false` desliga a leitura de preços no
 `run` (só coleta os jornais; o resumo traz a validade, sem contagem de preços) — o
 subcomando `jornais precos` continua lendo sob demanda.
@@ -271,4 +297,12 @@ Para forçar o Examine a reavaliar posts antigos, apague as duas chaves (ou o
 ```
 
 Os testes usam fixtures recortadas das respostas reais (JSON do Assaí, API do
-Atacadão, HTML do Covabra e os dois renders do Instagram) e não acessam a rede.
+Atacadão, HTML do Covabra e os dois renders do Instagram) e não acessam a rede. Desde
+18/10/2026 também cobrem os utilitários internos (HTTP e Telegram com clientes falsos,
+estado, renderizadores) e a operação (resolução do config, `limpar` e `run` com
+mercados/renderer falsos): 89 testes.
+
+Estratégias conhecidas e ainda **não** implementadas: no Assaí, pré-processar a imagem
+(escala/cinza/limiar) e usar o OCR com coordenadas (TSV) para casar nome e preço pela
+posição; no Atacadão, reordenar as linhas por coordenada para corrigir a região de
+hortifruti. Ambas dependem de medir o ganho antes de mexer no parser atual.

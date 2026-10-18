@@ -24,13 +24,14 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
 - Todo comando chama `load_dotenv()`: `.env` (não versionado) com `TELEGRAM_BOT_TOKEN` e
   `TELEGRAM_CHAT_ID` para enviar — sem eles use `--no-send`; `JINA_API_KEY` e
   `EXAMINE_TOKEN` são opcionais.
-- `data/` guarda `data/<AAAA-MM-DD>/<mercado>.pdf`, `raw/` (originais), `precos/*.csv|json`
-  e `state.json`. Rodar `run` no mesmo dia sobrescreve o PDF e limpa os brutos do mercado
-  antes de regravar.
+- `data/` guarda `data/<AAAA-MM-DD>/<mercado>.pdf`, `raw/` (originais), `precos/*.csv|json`,
+  `run.log` (espelho do terminal de cada execução) e `state.json`. Rodar `run` no mesmo dia
+  sobrescreve o PDF e limpa os brutos do mercado antes de regravar. Retenção:
+  `jornais limpar --dias 30 [--dry-run]` apaga coletas antigas.
 
 ## Arquitetura
 
-- `src/jornais/cli.py` — entrypoint `jornais` (`run|precos|site-precos|render|examine-probe`),
+- `src/jornais/cli.py` — entrypoint `jornais` (`run|precos|site-precos|render|examine-probe|limpar`),
   orquestração (`cmd_run` → `publish`) e resumo/captions do Telegram.
 - `src/jornais/markets/<chave>.py` — um módulo por mercado com `KEY`, `LABEL` e
   `fetch(ctx, cfg) -> MarketResult`, registrados em `markets/__init__.py`
