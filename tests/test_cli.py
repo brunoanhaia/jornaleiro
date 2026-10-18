@@ -112,3 +112,25 @@ def test_resumo_sem_leitura_de_precos_mostra_so_a_validade() -> None:
     assert "Covabra - 4 pags - 15/10 - 21/10" in texto
     assert "Savegnago - 4 pags - arquivo de 16/10 18:15 (America/Sao_Paulo)" in texto
     assert "itens" not in texto and "precos" not in texto
+
+
+def test_rotulo_fonte_marca_ocr_e_fontes_mistas() -> None:
+    from jornais.cli import _rotulo_fonte
+
+    assert _rotulo_fonte("texto") == ""
+    assert _rotulo_fonte("nenhuma") == ""
+    assert _rotulo_fonte("ocr") == " (OCR)"
+    assert _rotulo_fonte("texto+ocr") == " (texto+OCR)"
+    assert _rotulo_fonte("sem-ocr") == ""
+    assert _rotulo_fonte("texto+sem-ocr") == " (OCR indisponivel em parte)"
+
+
+def test_resumo_mostra_falha_na_leitura_de_precos() -> None:
+    rows = [
+        row("atacadao", "Atacadão", count=6, unit="folhetos", validity="12/10 a 19/10",
+            path=Path("data/2026-10-18/atacadao.pdf"), erro_precos="RuntimeError: decodificacao"),
+    ]
+
+    texto = summary_message(DIA, rows)
+
+    assert "Atacadão - 6 folhetos - 12/10 a 19/10 | precos: falha (RuntimeError: decodificacao)" in texto

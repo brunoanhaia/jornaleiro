@@ -231,5 +231,5 @@ def write(produtos: list[Produto], data_dir: Path, dia: date, nome: str = "exami
         json.dumps([asdict(produto) for produto in produtos], ensure_ascii=False, indent=1) + "\n",
         encoding="utf-8",
     )
-    csv_path.write_text(csv_text(produtos), encoding="utf-8")
+    csv_path.write_text(csv_text(produtos), encoding="utf-8-sig")
     return json_path, csv_path

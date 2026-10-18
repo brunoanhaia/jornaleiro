@@ -377,8 +377,7 @@ def documentos(rows: list[Row], *, enviar_precos: bool = True) -> list[tuple[str
 
 
 def caption_precos(row: Row) -> str:
-    marca = " (OCR)" if row.fonte == "ocr" else ""
-    return f"{row.result.label} - {row.itens} itens/{row.precos} precos{marca}"
+    return f"{row.result.label} - {row.itens} itens/{row.precos} precos{_rotulo_fonte(row.fonte)}"
 
 
 def measure(result: MarketResult, pages: int) -> tuple[str, int]:
@@ -425,19 +424,39 @@ def _precos_texto(row: Row) -> str:
     if row.precos:
         if row.fonte == "site":
             return f"{row.precos} produtos (site)"
-        return f"{row.itens} itens/{row.precos} precos{' (OCR)' if row.fonte == 'ocr' else ''}"
+        return f"{row.itens} itens/{row.precos} precos{_rotulo_fonte(row.fonte)}"
     return _motivo_vazio(row.fonte) if row.path is not None else ""
 
 
+def _rotulo_fonte(fonte: str) -> str:
+    """Marcador curto da origem dos precos ('' quando e so a camada de texto)."""
+    partes = set(fonte.split("+"))
+    if "ocr" in partes:
+        return " (texto+OCR)" if "texto" in partes else " (OCR)"
+    if "sem-ocr" in partes and "texto" in partes:
+        return " (OCR indisponivel em parte)"
+    return ""
+
+
+_SEM_PRECOS = {
+    "texto": "sem precos na camada de texto",
+    "ocr": "OCR nao leu nenhum preco",
+    "sem-ocr": "precos: OCR indisponivel (tesseract nao encontrado)",
+    "nenhuma": "precos: encarte em imagem e OCR desligado",
+    "erro": "precos: falha na leitura",
+    "desligado": "",
+}
+
+
 def _motivo_vazio(fonte: str) -> str:
-    return {
-        "texto": "sem precos na camada de texto",
-        "ocr": "OCR nao leu nenhum preco",
-        "sem-ocr": "precos: OCR indisponivel (tesseract nao encontrado)",
-        "nenhuma": "precos: encarte em imagem e OCR desligado",
-        "erro": "precos: falha na leitura",
-        "desligado": "",
-    }.get(fonte, "sem precos")
+    if fonte in _SEM_PRECOS:
+        return _SEM_PRECOS[fonte]
+    partes = set(fonte.split("+"))
+    if "sem-ocr" in partes:
+        return "precos: OCR indisponivel em parte dos arquivos (tesseract nao encontrado)"
+    if "nenhuma" in partes:
+        return "precos: encarte em imagem e OCR desligado"
+    return "sem precos"
 
 
 def caption(row: Row) -> str:

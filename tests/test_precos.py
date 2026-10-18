@@ -184,9 +184,77 @@ def test_csv_uma_linha_por_preco(tmp_path) -> None:
     rows = precos._extract_page(SAVEGNAGO_TEXTO, "savegnago", 1)
     json_path, csv_path = precos.write(rows, tmp_path, date(2026, 10, 15), "savegnago")
 
-    linhas = csv_path.read_text(encoding="utf-8").strip().splitlines()
-    assert linhas[0] == "mercado;pagina;produto;preco;ordem"
+    assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")  # BOM para o Excel pt-BR
+    linhas = csv_path.read_text(encoding="utf-8-sig").strip().splitlines()
+    assert linhas[0] == "mercado;pagina;produto;preco;ordem;tipo"
     assert len(linhas) == len(rows) + 1
-    assert linhas[1] == "savegnago;1;Café Brasileiro 500g;18.90;1"
+    assert linhas[1] == "savegnago;1;Café Brasileiro 500g;18.90;1;"
     assert json_path.name == "savegnago.json"
     assert '"preco": 18.9' in json_path.read_text(encoding="utf-8")
+
+
+ATACADAO_PRECO_ANTES_DO_NOME = """PREÇO VAREJO/ATACADO
+PREÇO COM OFERTA ATIVADA
+NO APP PAGANDO COM:
+CARTÃO ATACADÃO,
+CARREFOUR OU
+SAM’S CLUB
+Limite máximo de 6 kg
+por cliente nos cartões
+R$5,49
+R$4,79
+R$5,99
+Cebola
+Quilo
+"""
+
+
+def test_atacadao_preco_antes_do_nome_fica_com_o_item() -> None:
+    """Na regiao de hortifruti o preco vem antes do nome na arte do encarte."""
+    rows = precos._extract_page(ATACADAO_PRECO_ANTES_DO_NOME, "atacadao", 1)
+
+    assert [(r.produto, r.preco, r.ordem, r.tipo) for r in rows] == [
+        ("Cebola Quilo", 5.49, 1, "app"),
+        ("Cebola Quilo", 4.79, 2, "app/cartao"),
+        ("Cebola Quilo", 5.99, 3, "varejo/atacado"),
+    ]
+
+
+def test_tipo_por_valor_no_atacadao() -> None:
+    rows = precos._extract_page(ATACADAO_TEXTO, "atacadao", 2)
+    tipos = {r.preco: r.tipo for r in rows}
+
+    assert tipos[22.90] == "varejo/atacado"
+    assert tipos[20.90] == "app"
+    assert tipos[18.90] == "app/cartao"
+
+
+def test_tipo_cheio_e_clube_no_savegnago() -> None:
+    rows = precos._extract_page(SAVEGNAGO_TEXTO, "savegnago", 1)
+    tipos = {(r.produto, r.preco): r.tipo for r in rows}
+
+    assert tipos[("Azeite italiano extra virgem Filippo Berio 500ml", 28.90)] == "cheio"
+    assert tipos[("Azeite italiano extra virgem Filippo Berio 500ml", 26.90)] == "clube"
+    assert tipos[("Café Brasileiro 500g", 18.90)] == ""  # preco unico: sem tipo
+
+
+def test_extract_arquivos_combina_fontes(monkeypatch, tmp_path) -> None:
+    """Folhetos com fontes diferentes viram `texto+sem-ocr`, sem esconder o OCR que faltou."""
+    from datetime import date
+
+    pasta = tmp_path / "2026-10-15" / "raw"
+    pasta.mkdir(parents=True)
+    (pasta / "x-1.pdf").write_bytes(b"a")
+    (pasta / "x-2.pdf").write_bytes(b"b")
+    respostas = {
+        b"a": precos.Leitura([precos.Preco("x", 1, "Item", 9.99, 1)], "texto"),
+        b"b": precos.Leitura([], "sem-ocr"),
+    }
+    monkeypatch.setattr(precos, "extract", lambda dados, mercado, ocr=None: respostas[dados])
+
+    leitura = precos.extract_arquivos(
+        precos.arquivos_brutos(tmp_path, date(2026, 10, 15), "x"), "x"
+    )
+
+    assert leitura.fonte == "texto+sem-ocr"
+    assert [preco.preco for preco in leitura.precos] == [9.99]

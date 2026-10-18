@@ -180,7 +180,8 @@ def test_csv_do_site(tmp_path) -> None:
     produtos = [site._produto(NO_REAL, "Alimentos Básicos"), site._produto(NO_PESAVEL, "Feira")]
     json_path, csv_path = site.write(produtos, tmp_path, date(2026, 10, 15))
 
-    linhas = csv_path.read_text(encoding="utf-8").strip().splitlines()
+    linhas = csv_path.read_text(encoding="utf-8-sig").strip().splitlines()
+    assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")
     assert linhas[0] == "id;categoria;produto;preco;pesavel;unidade;estoque;descontos"
     assert linhas[1] == "102104;Alimentos Básicos;Feijao Carioca Zorzo 1kg;10.99;nao;;354.0;Aplicativo=3.1"
     assert linhas[2] == "206097;Feira;Feira Pera Willians kg;19.99;sim;100.0;;"

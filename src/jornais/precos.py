@@ -83,17 +83,24 @@ _TEXT_CHARS_MINIMOS = 200  # abaixo disso o encarte e imagem (sem camada de text
 _MAX_DESCRICAO = 200
 _TESSDATA_LOCAL = "~/.local/share/tesseract/usr/share/tesseract-ocr"
 _BINARIO_LOCAL = "~/.local/share/tesseract/usr/bin/tesseract"
+_ORDEM_FONTES = ("texto", "ocr", "sem-ocr", "nenhuma")  # ordem de exibicao da fonte combinada
 
 
 @dataclass
 class Preco:
-    """Um preco lido do encarte. `ordem` e a posicao do preco dentro do item."""
+    """Um preco lido do encarte.
+
+    `ordem` e a posicao do preco dentro do item; `tipo` e o papel inferido do preco
+    (ex.: `varejo/atacado`, `app`, `cheio`, `clube`) quando a heuristica de
+    `_classificar_tipos` consegue dizer — vazio quando e so mais um preco do item.
+    """
 
     mercado: str
     pagina: int
     produto: str
     preco: float
     ordem: int
+    tipo: str = ""
 
 
 @dataclass
@@ -230,9 +237,14 @@ def _indice(caminho: Path) -> int:
 
 
 def extract_arquivos(caminhos: list[Path], mercado: str, ocr: Ocr | None = None) -> Leitura:
-    """Junta a leitura de varios arquivos do mesmo mercado (um por folheto/pagina)."""
+    """Junta a leitura de varios arquivos do mesmo mercado (um por folheto/pagina).
+
+    A `fonte` resultante e a combinacao das fontes de cada arquivo na ordem
+    `texto+ocr+sem-ocr+nenhuma` (ex.: `texto+sem-ocr` quando um folheto tinha
+    camada de texto e o outro ficou sem OCR).
+    """
     precos: list[Preco] = []
-    fontes: list[str] = []
+    fontes: set[str] = set()
     for caminho in caminhos:
         try:
             dados = caminho.read_bytes()
@@ -240,13 +252,10 @@ def extract_arquivos(caminhos: list[Path], mercado: str, ocr: Ocr | None = None)
             continue
         leitura = extract(dados, mercado, ocr)
         precos.extend(leitura.precos)
-        fontes.append(leitura.fonte)
+        fontes.add(leitura.fonte)
     if not fontes:
         return Leitura()
-    for fonte in ("texto", "ocr", "sem-ocr", "nenhuma"):
-        if fonte in fontes:
-            return Leitura(precos, fonte)
-    return Leitura()  # pragma: no cover - inalcancavel
+    return Leitura(precos, "+".join(fonte for fonte in _ORDEM_FONTES if fonte in fontes))
 
 
 def _extract_ocr(pdf: bytes, mercado: str, ocr: Ocr) -> list[Preco]:
@@ -287,7 +296,10 @@ def _ocr_imagem(dados: bytes, ocr: Ocr) -> str:
 def _extract_page(texto: str, mercado: str, pagina: int, limpar: bool = False) -> list[Preco]:
     precos: list[Preco] = []
     descricao: list[str] = []
+    pendentes: list[float] = []
+    pendentes_emitidos: list[Preco] = []
     emitidos = 0
+    flush_pendente = False
 
     for bruta in texto.splitlines():
         linha = _CONTROLE.sub("", " ".join(bruta.split()))
@@ -296,22 +308,92 @@ def _extract_page(texto: str, mercado: str, pagina: int, limpar: bool = False) -
 
         valores = _valores(linha)
         if valores is not None:
-            produto = " ".join(descricao)[:_MAX_DESCRICAO]
-            for valor in valores:
-                emitidos += 1
-                precos.append(Preco(mercado, pagina, produto, valor, emitidos))
+            if descricao:
+                produto = " ".join(descricao)[:_MAX_DESCRICAO]
+                emitidos = _emitir(precos, mercado, pagina, produto, valores, emitidos)
+                flush_pendente = False
+                pendentes_emitidos = []
+            else:
+                # ha encarte (Atacadao) que desenha o preco antes do nome: segura o
+                # preco e atribui quando a descricao aparecer
+                pendentes.extend(valores)
             continue
 
         if _RUIDO.match(linha) or _SECAO.match(linha):
             continue
         if limpar and not _parece_nome(linha):
             continue
-        if emitidos:  # linha de descricao depois de precos => novo item
+        if emitidos and not flush_pendente:  # descricao depois de precos => novo item
             descricao = []
             emitidos = 0
         descricao.append(linha)
+        nome = " ".join(descricao)[:_MAX_DESCRICAO]
+        if pendentes:
+            antes = len(precos)
+            emitidos = _emitir(precos, mercado, pagina, nome, pendentes, emitidos)
+            pendentes_emitidos = precos[antes:]
+            pendentes = []
+            flush_pendente = True
+        elif flush_pendente and pendentes_emitidos:  # o nome do item tem mais linhas
+            for preco in pendentes_emitidos:
+                preco.produto = nome
 
+    if pendentes:  # a pagina acabou sem nenhuma descricao para esses precos
+        _emitir(precos, mercado, pagina, "", pendentes, emitidos)
+
+    _classificar_tipos(precos, mercado)
     return precos
+
+
+def _emitir(
+    precos: list[Preco], mercado: str, pagina: int, produto: str, valores: list[float], emitidos: int
+) -> int:
+    for valor in valores:
+        emitidos += 1
+        precos.append(Preco(mercado, pagina, produto, valor, emitidos))
+    return emitidos
+
+
+def _classificar_tipos(precos: list[Preco], mercado: str) -> None:
+    """Preenche `tipo` nos blocos em que da para inferir o papel de cada preco.
+
+    O texto extraido nao tem os rotulos legiveis do encarte, mas os encartes
+    publicam os precos do item sempre do maior para o menor, com papeis fixos por
+    mercado (verificado nos encartes de 15/10/2026; ver README):
+
+    - Atacadao: `varejo/atacado`, `app`, `app/cartao` (o preco do app com cartao e o
+      menor; bloco de 2 fica `varejo/atacado` + `app`; bloco de 1 fica sem tipo).
+    - Savegnago e Covabra: `cheio` e `clube` (o preco do clube/desconto e o menor).
+
+    Bloco com tamanho inesperado (ex.: itens fundidos pela ordem de leitura do PDF)
+    fica todo sem tipo, para nao rotular preco errado.
+    """
+    if mercado == "atacadao":
+        papeis = ("varejo/atacado", "app", "app/cartao")
+    elif mercado in ("savegnago", "covabra"):
+        papeis = ("cheio", "clube")
+    else:
+        return
+
+    for bloco in _blocos(precos):
+        if not 2 <= len(bloco) <= len(papeis):
+            continue
+        ordenados = sorted(bloco, key=lambda preco: preco.preco, reverse=True)
+        for posicao, preco in enumerate(ordenados[: len(papeis)]):
+            preco.tipo = papeis[posicao]
+
+
+def _blocos(precos: list[Preco]):
+    """Runs consecutivos de `(pagina, produto)` — um item do encarte."""
+    bloco: list[Preco] = []
+    for preco in precos:
+        chave = (preco.pagina, preco.produto)
+        if bloco and chave != (bloco[-1].pagina, bloco[-1].produto):
+            yield bloco
+            bloco = []
+        bloco.append(preco)
+    if bloco:
+        yield bloco
 
 
 def _parece_nome(linha: str) -> bool:
@@ -345,16 +427,20 @@ def _valores(linha: str) -> list[float] | None:
 def csv_text(precos: list[Preco]) -> str:
     out = StringIO()
     escritor = csv.writer(out, delimiter=";", lineterminator="\n")
-    escritor.writerow(["mercado", "pagina", "produto", "preco", "ordem"])
+    escritor.writerow(["mercado", "pagina", "produto", "preco", "ordem", "tipo"])
     for preco in precos:
         escritor.writerow(
-            [preco.mercado, preco.pagina, preco.produto, f"{preco.preco:.2f}", preco.ordem]
+            [preco.mercado, preco.pagina, preco.produto, f"{preco.preco:.2f}", preco.ordem, preco.tipo]
         )
     return out.getvalue()
 
 
 def write(precos: list[Preco], data_dir: Path, dia: date, mercado: str) -> tuple[Path, Path]:
-    """Grava `precos/<mercado>.json` e `.csv`; devolve os dois caminhos."""
+    """Grava `precos/<mercado>.json` e `.csv`; devolve os dois caminhos.
+
+    O CSV sai com BOM (`utf-8-sig`) para abrir direto no Excel pt-BR; o JSON fica
+    em UTF-8 puro.
+    """
     folder = data_dir / dia.isoformat() / "precos"
     folder.mkdir(parents=True, exist_ok=True)
     json_path = folder / f"{mercado}.json"
@@ -363,5 +449,5 @@ def write(precos: list[Preco], data_dir: Path, dia: date, mercado: str) -> tuple
         json.dumps([asdict(preco) for preco in precos], ensure_ascii=False, indent=1) + "\n",
         encoding="utf-8",
     )
-    csv_path.write_text(csv_text(precos), encoding="utf-8")
+    csv_path.write_text(csv_text(precos), encoding="utf-8-sig")
     return json_path, csv_path
