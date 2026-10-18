@@ -92,9 +92,18 @@ conta do clube Examine — com ele o encarte do Examine vem do jornal oficial do
 .venv/bin/jornais limpar --dias 30 --dry-run
 ```
 
+```bash
+# historico em SQLite, derivado dos CSVs (banco em data/historico.sqlite)
+.venv/bin/jornais historico                    # o que ja tem no banco
+.venv/bin/jornais historico --reindex          # reconstroi o banco a partir dos CSVs
+.venv/bin/jornais historico --produto arroz    # leituras recentes do produto
+.venv/bin/jornais historico --quedas           # variacoes de preco (menor do dia)
+```
+
 Opções de `run`: `--only k1,k2`, `--renderer auto|playwright|jina`, `--no-send`,
 `--sem-comprimir`, `--sem-ocr`, `--sem-precos` (só os jornais: não lê nem envia preços),
-`--data-dir DIR`, `--config ARQUIVO`. Mercados e URLs ficam em `config.toml`, procurado
+`--forcar` (reenvia mesmo com o encarte idêntico ao último envio), `--data-dir DIR`,
+`--config ARQUIVO`. Mercados e URLs ficam em `config.toml`, procurado
 nesta ordem: `--config`, `$JORNAIS_CONFIG`, `./config.toml` e a raiz do repositório; um
 `data_dir` relativo no config é resolvido ao lado dele. Tudo roda igual como
 `python -m jornais ...`.
@@ -108,20 +117,32 @@ Códigos de saída: `0` mesmo com um mercado falhando, `1` se **todos** os merca
 selecionados falharem (ou nenhum PDF sair), `2` para erro de configuração
 (token/chat_id ausente ou mercado desconhecido).
 
+Antes de enviar, o `run` confere o `data/state.json`: se os brutos de um mercado têm o
+mesmo sha256 do último envio (`mercados.<chave>`), o PDF/CSV daquele mercado é pulado e a
+linha do resumo ganha `AVISO: nao reenviado: igual ao de 15/10` (`--forcar` reenvia de
+qualquer jeito). Outros avisos do resumo: `encarte vencido em DD/MM` (a validade
+terminou antes de hoje) e `queda suspeita de precos` (menos da metade dos preços da
+última leitura). Nenhum aviso aborta o run.
+
 A mensagem enviada traz uma linha por mercado — com o tamanho, a validade e os preços
 lidos — e o resumo de falhas:
 
 ```
 Encartes Rio Claro - 15/10/2026
 Assaí Atacadista - 8 pags - Preços válidos para 15/10/2026 | 12 itens/16 precos (OCR)
-Atacadão - 6 folhetos - 12/10 a 19/10 | 237 itens/554 precos
+Atacadão - 6 folhetos - 12/10 a 19/10 | 256 itens/573 precos
 Covabra - 4 pags - 15/10 - 21/10 | 169 itens/176 precos
 Savegnago - 4 pags - válido até 17/10/2026 | 180 itens/261 precos
 Examine - 1 pag - 15/10 a 18/10/2026 | OCR nao leu nenhum preco
 Falhas: nenhuma
+
+Quedas recentes (menor preco do item por dia):
+-0% atacadao: Toalha de Papel Dadu Branca - Interfolha Pacote com 1000 unidades R$ 19.98 (15/10) -> R$ 19.90
 ```
 
-(contagens remedidas em 18/10/2026, com os encartes de 15/10.)
+(contagens remedidas em 18/10/2026, com os encartes de 15/10; o bloco de quedas aparece
+quando há histórico — ver "Histórico de preços" — e vale entre as duas últimas leituras
+de cada produto na janela de 30 dias.)
 
 Cada PDF vai como documento com a legenda `<mercado> - <validade> - <n> pags`
 (ou `<n> folhetos`, no caso do Atacadão); logo depois de cada PDF vai o CSV da leitura
@@ -198,14 +219,27 @@ direto no Excel pt-BR).
 
 | Mercado | Como o preço é lido | Resultado nos encartes de 15/10/2026 (medido em 18/10) |
 |---|---|---|
-| Atacadão | camada de texto do PDF | 554 preços (237 itens) |
+| Atacadão | camada de texto do PDF, **por coordenadas** (abaixo) | 573 preços (256 itens) |
 | Savegnago | camada de texto do PDF | 261 preços (180 itens) |
 | Covabra | camada de texto do PDF | 176 preços (169 itens) |
 | Assaí | **OCR** (encarte em JPEG) | 16 preços (12 itens) |
 | Examine | **catálogo do site** (GraphQL) | 11.124 produtos com preço (4.408 com desconto) |
 
-A leitura casa a descrição impressa com os preços que vêm logo depois dela (ou **antes**,
-no hortifruti do Atacadão); `ordem` é a posição do preço dentro do item, porque o
+No Atacadão o PDF desenha cada item como um card solto — nome à esquerda, até três
+preços empilhados à direita — e a ordem do fluxo de texto embaralha preço e nome entre
+itens vizinhos (no hortifruti, um produto saía com o preço do outro). Desde 18/10/2026
+esse mercado é lido **por coordenadas** (`x, y` de cada fragmento): cada `R$` vira um
+slot de preço, slots da mesma coluna x formam um item e cada fragmento de nome vai para
+o item à sua direita. Um vão grande entre dois preços da mesma coluna pode ser fronteira
+de cards ou o preço do app em cima do cheio com o nome no meio; quem decide é o bloco de
+nome do card — cobrindo boa parte do vão, os preços ficam juntos; sem cobrir, o item
+fecha. A linha riscada (`de: R$ 9,99 por:`) é descartada inteira, com o rótulo junto.
+Com isso, os preços com `tipo` identificado subiram de 428 (de 554 lidos) para 459 (de
+573) nos encartes de 15/10/2026.
+
+A leitura casa a descrição impressa com os preços do item (no Atacadão, por coordenadas;
+nos demais mercados, a descrição vale para os preços que vêm logo depois dela no fluxo de
+texto); `ordem` é a posição do preço dentro do item, porque o
 encarte publica vários preços por produto (o Atacadão traz varejo/atacado, app e cartão;
 o Savegnago traz "de/por"). A coluna `tipo` tenta dizer o **papel** de cada preço por
 heurística de valor — o encarte publica do maior para o menor: no Atacadão, bloco de 3
@@ -226,11 +260,12 @@ não existir, `jornais run` e `jornais precos` seguem funcionando e o resumo diz
 
 Limitações conhecidas, todas verificadas nos encartes de hoje: no Atacadão/Covabra/
 Savegnago o nome vem do texto impresso (quando o próprio PDF perde um glifo, sai torto
-— ex.: `Arroz po 1` em vez de `Arroz tipo 1`); o preço desenhado **antes** do nome
-(hortifruti do Atacadão) fica pendente e é atribuído ao item quando a descrição
-aparece — zero linhas com `produto` vazio nos encartes de 15/10 (antes eram 4) —, mas
-nessa região a arte emite `[rótulos][preços][nome]`, então os preços de itens vizinhos
-podem trocar de dono; `tipo` é heurística de valor, não rótulo lido; no Assaí o OCR
+— ex.: `Arroz po 1` em vez de `Arroz tipo 1`); no Atacadão a leitura por coordenadas
+acabou com a troca de preço entre itens vizinhos do hortifruti (a leitura por fluxo de
+texto dava `Cebola` com o preço da cenoura e colava o `de: R$` riscado no nome) — o que
+sobra são os itens-caixa (`CAIXA/SACO COM 19KG`) do hortifruti, cujo preço às vezes cai
+no item de cima ou fica sem descrição (9 preços sem `produto` nos encartes de 15/10);
+`tipo` é heurística de valor, não rótulo lido; no Assaí o OCR
 acha poucos preços e as descrições saem truncadas/ruidosas (só as linhas com palavra
 real e pouco lixo entram); o encarte em imagem do Examine não é lido por OCR (é arte
 com preço estilizado) — para esse mercado a leitura vem do catálogo do site, abaixo.
@@ -238,7 +273,7 @@ Os PDFs continuam no `data/<dia>/` para conferência.
 
 `jornais run` também lê os preços do PDF que acabou de gerar, grava os mesmos
 `data/<dia>/precos/<mercado>.csv|json`, põe a contagem na mensagem do Telegram
-(uma linha por mercado, ex.: `| 237 itens/554 precos`) e manda o CSV como documento
+(uma linha por mercado, ex.: `| 256 itens/573 precos`) e manda o CSV como documento
 logo depois do PDF do mercado. O marcador de fonte aparece quando a leitura não veio
 da camada de texto pura: `(OCR)`, `(texto+OCR)` ou `(OCR indisponivel em parte)` (um
 arquivo do mercado ficou sem OCR); se a leitura falhar, a linha vira
@@ -279,6 +314,36 @@ Em `jornais run`, `[markets.examine] precos_site = true` faz a leitura de preço
 Examine vir daqui (o CSV vai junto dos PDFs) e pula o OCR do encarte em imagem, que não
 lia nada.
 
+## Histórico de preços (SQLite)
+
+`jornais historico` indexa os CSVs de `data/<dia>/precos/` num banco SQLite
+(`data/historico.sqlite`, caminho em `[historico] db` do `config.toml`); o banco **não**
+entra no git e é descartável — `--reindex` o reconstrói dos CSVs a qualquer momento:
+
+```bash
+.venv/bin/jornais historico                    # precos/coletas/site no banco
+.venv/bin/jornais historico --reindex          # reconstroi dos CSVs de data/
+.venv/bin/jornais historico --produto "arroz"  # ultimas leituras do produto (trecho do nome)
+.venv/bin/jornais historico --quedas --dias 30 # so as quedas da janela
+```
+
+`--quedas` usa o **menor preço do dia** por (mercado, produto normalizado — sem acento,
+minúsculo), compara as duas últimas leituras de cada produto e lista só quedas reais
+(`agora < antes`), da maior para a menor; altas ficam de fora e produtos sem duas
+leituras na janela também. No exemplo dos encartes de 15 e 18/10/2026 (mesma semana de
+promoção), 229 dos 230 produtos do Atacadão repetiram o preço e só a Toalha de Papel
+baixou R$ 19,98 → R$ 19,90. Nos resultados de `--produto`, o `tipo` vem junto do preço.
+
+O banco guarda uma linha por preço lido (`mercado, dia, pagina, produto, produto_norm,
+preco, ordem, tipo`), uma linha por coleta (`coletas`, com `itens`, `precos` e o tamanho
+dos PDFs/brutos) e o catálogo do site do Examine (`site_produtos`); os PDFs não entram.
+No `run`, o banco só é atualizado se **já existir** (nunca derruba a execução) e o dia é
+substituído inteiro (`registrar_dia`), então rodar duas vezes no mesmo dia não duplica
+nada. As quedas da janela de 30 dias entram no resumo do Telegram quando
+`[historico] quedas_no_resumo > 0` (padrão 3; o bloco está no exemplo de mensagem
+acima). `jornais limpar` reindexa o banco depois de apagar as coletas, para ele não
+apontar para dia removido.
+
 ## Estado e a semente do Examine
 
 `data/state.json` guarda o último post do Examine processado
@@ -286,6 +351,11 @@ lia nada.
 parte da página desse post, pega os shortcodes recentes, filtra pelas legendas com
 `Ofertas válidas` **e** `lojas de Rio Claro` e escolhe o post mais novo. Depois disso
 o post passa a ser a nova semente, então cada execução só coleta encartes novos.
+
+Também ficam lá, por mercado (`mercados.<chave>`), o sha256 dos brutos do último envio,
+o dia, as contagens e o flag `enviado` — é o que o `run` usa para não reenviar o mesmo
+encarte (ver "Uso"). A gravação é atômica (arquivo temporário + `os.replace`), então um
+`Ctrl-C` no meio não deixa o JSON pela metade.
 
 Para forçar o Examine a reavaliar posts antigos, apague as duas chaves (ou o
 `data/state.json`) antes de rodar.
@@ -297,12 +367,14 @@ Para forçar o Examine a reavaliar posts antigos, apague as duas chaves (ou o
 ```
 
 Os testes usam fixtures recortadas das respostas reais (JSON do Assaí, API do
-Atacadão, HTML do Covabra e os dois renders do Instagram) e não acessam a rede. Desde
-18/10/2026 também cobrem os utilitários internos (HTTP e Telegram com clientes falsos,
-estado, renderizadores) e a operação (resolução do config, `limpar` e `run` com
-mercados/renderer falsos): 89 testes.
+Atacadão, HTML do Covabra e os dois renders do Instagram), fragmentos sintéticos de
+coordenadas para a leitura por colunas do Atacadão e bancos temporários para o
+histórico — e não acessam a rede. Desde 18/10/2026 também cobrem os utilitários internos
+(HTTP e Telegram com clientes falsos, estado, renderizadores) e a operação (resolução do
+config, `limpar` e `run` com mercados/renderer falsos, frescor/avisos): 111 testes.
 
 Estratégias conhecidas e ainda **não** implementadas: no Assaí, pré-processar a imagem
 (escala/cinza/limiar) e usar o OCR com coordenadas (TSV) para casar nome e preço pela
-posição; no Atacadão, reordenar as linhas por coordenada para corrigir a região de
-hortifruti. Ambas dependem de medir o ganho antes de mexer no parser atual.
+posição; no Atacadão, ler os rótulos (`PREÇO VAREJO/ATACADO`, `No app`, `Cartão`) para o
+`tipo` deixar de ser heurística de valor. As duas dependem de medir o ganho antes de
+mexer no parser atual.
