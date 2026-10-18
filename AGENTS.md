@@ -3,7 +3,10 @@
 CLI em Python >= 3.11 (argparse, sem framework) que coleta os encartes de 5 mercados de
 Rio Claro/SP, monta um PDF por mercado, lê os preços e envia PDFs + CSVs por Telegram.
 Execução manual; sem agendador, API ou front-end (o SQLite é um índice derivado dos CSVs,
-não uma fonte de verdade). Código, logs, legendas e testes são em pt-BR — mantenha o idioma.
+não uma fonte de verdade). Código, logs, legendas e testes são em pt-BR — mantenha o
+idioma. Os commits seguem *Conventional Commits*: `tipo(escopo): resumo` em pt-BR (tipos
+usados: `feat`, `fix`, `docs`, `test`, `chore`), com corpo curto explicando o porquê
+quando ajudar.
 
 `README.md` é a fonte de verdade do comportamento (com medições datadas). Leia a seção
 relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
