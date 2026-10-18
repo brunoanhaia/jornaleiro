@@ -1,0 +1,55 @@
+renderer = "auto"        # auto | playwright | jina
+data_dir = "data"
+
+[comprimir]              # comprime os PDFs antes de gravar/enviar (paginas em A4)
+enabled = true
+modo = "forte"           # forte = rasteriza cada pagina (menor); padrao = reencoda as imagens
+dpi = 150                # usado no modo forte; 110 deixa ~15% menor e mais suave
+qualidade = 60
+largura_max = 1400       # usado no modo padrao
+achatar_mascara = true   # compoe a mascara suave no fundo branco (paginas CMYK)
+
+[precos]                 # leitura de precos dos encartes em imagem (Assai, Examine)
+ler = false              # false = run so coleta os jornais (validade vem no resumo, sem precos)
+enviar = false           # true = manda tambem os CSVs de precos junto dos PDFs no Telegram
+ocr = true
+ocr_bin = ""             # vazio: PATH, depois ~/.local/share/tesseract/usr/bin/tesseract
+ocr_tessdata = ""        # vazio: TESSDATA_PREFIX, depois instalacao local
+ocr_ld_library_path = "~/.local/share/tesslibs:~/.local/share/crlibs"
+ocr_idioma = "por"
+ocr_psm = 12             # 12 = texto esparso (melhor recall medido nos encartes)
+
+[markets.assai]
+enabled = true
+eid = 24
+nid = 77
+offers_page = "https://www.assai.com.br/ofertas/sao-paulo/assai-rio-claro"
+json_url = "https://www.assai.com.br/sites/default/files/static/ofertas_assai.json"
+max_paginas = 12
+
+[markets.atacadao]
+enabled = true
+uf = "SP"
+city = "Rio Claro"
+slug = "rio-claro"
+max_bytes = 41943040     # 40 MiB por mercado
+
+[markets.covabra]
+enabled = true
+page_url = "https://www.covabra.com.br/jornal-de-ofertas"
+city = "Rio Claro"
+
+[markets.savegnago]
+enabled = true
+pdf_url = "https://imagens.savegnagoonline.com.br/jornal-semanal-app/Rio_Claro.pdf"
+
+[markets.examine]
+enabled = true
+seed_url = "https://www.instagram.com/examinesupermercados/p/Deh37qhjcMZ/"
+caption_filter = "Ofertas válidas"
+max_posts = 12
+precos_site = true                                        # le os precos do e-commerce
+site_url = "https://superexaminerc.crescevendas.com/ecommerce"
+site_graphql = "https://www.crescevendas.com/ecommerce/graphql"   # catalogo (products)
+site_graphql_jornal = "https://www.crescevendas.com/graphql"      # jornal (pamphlets)
+site_categorias_max = 0                                   # 0 = todas as categorias

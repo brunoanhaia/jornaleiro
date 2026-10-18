@@ -1,0 +1,34 @@
+[project]
+name = "jornais-mercados"
+version = "0.1.0"
+description = "Coleta os encartes dos mercados de Rio Claro/SP e envia por Telegram"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx",
+    "playwright",
+    "pypdf",
+    "pypdfium2",
+    "img2pdf",
+    "pikepdf",
+    "pillow",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+jornais = "jornais.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
