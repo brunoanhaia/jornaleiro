@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import time
 from pathlib import Path
 
@@ -73,11 +74,12 @@ class Telegram:
         size = path.stat().st_size
         if size > MAX_DOCUMENT:
             raise RuntimeError(f"{path.name} tem {size} bytes (limite {MAX_DOCUMENT} bytes)")
+        tipo = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         with path.open("rb") as handle:
             return self._call(
                 "sendDocument",
                 data={"chat_id": self.chat_id, "caption": caption[:MAX_CAPTION]},
-                files={"document": (path.name, handle, "application/pdf")},
+                files={"document": (path.name, handle, tipo)},
             )
 
 

@@ -92,22 +92,37 @@ def fetch_site(ctx: Context, cfg: MarketCfg) -> MarketResult | None:
     if not folhetos:
         return None
 
-    assets = [
-        Asset(
-            url=folheto.url,
-            content=http.get_bytes(folheto.url, headers=IMAGE_HEADERS),
-            kind="image",
-            suffix=Path(folheto.url).suffix or ".jpeg",
+    assets: list[Asset] = []
+    falhas: list[str] = []
+    for folheto in folhetos:
+        try:
+            conteudo = http.get_bytes(folheto.url, headers=IMAGE_HEADERS)
+        except Exception as exc:  # noqa: BLE001 - uma pagina ruim nao derruba o jornal
+            falhas.append(describe_error(exc))
+            continue
+        assets.append(
+            Asset(
+                url=folheto.url,
+                content=conteudo,
+                kind="image",
+                suffix=Path(folheto.url).suffix or ".jpeg",
+            )
         )
-        for folheto in folhetos
-    ]
+    if not assets:
+        detalhe = f" ({'; '.join(falhas)})" if falhas else ""
+        print(f"[examine] nenhuma pagina do jornal oficial baixou{detalhe}; usando Instagram")
+        return None
+
     titulos = sorted({folheto.titulo for folheto in folhetos if folheto.titulo})
+    note = f"jornal oficial do site ({len(assets)} pags: {'; '.join(titulos)})"
+    if falhas:
+        note += f" - {len(falhas)} pagina(s) sem download: {'; '.join(falhas)}"
     return MarketResult(
         key=KEY,
         label=LABEL,
         status="ok",
         assets=assets,
-        note=f"jornal oficial do site ({len(folhetos)} pags: {'; '.join(titulos)})",
+        note=note,
     )
 
 

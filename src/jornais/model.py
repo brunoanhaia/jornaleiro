@@ -5,8 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
+
+# fuso usado em todas as datas do projeto (validade, "hoje", nome das pastas)
+SP = ZoneInfo("America/Sao_Paulo")
 
 
 @dataclass

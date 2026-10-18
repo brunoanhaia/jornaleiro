@@ -14,17 +14,14 @@ import re
 from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 from io import BytesIO
-from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader
 
 from .. import http
-from ..model import Asset, Context, MarketCfg, MarketResult
+from ..model import Asset, Context, MarketCfg, MarketResult, SP
 
 KEY = "savegnago"
 LABEL = "Savegnago"
-
-SP = ZoneInfo("America/Sao_Paulo")
 
 # linhas de validade do encarte; a data completa pode ser "até sábado - 17/10/2026"
 # ou "de 15 a 18/10/2026" (a maior data da soma é a validade do encarte inteiro)

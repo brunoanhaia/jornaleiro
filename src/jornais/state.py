@@ -7,12 +7,16 @@ from pathlib import Path
 from typing import Any
 
 
+LIMITE_SEEN = 200  # shortcodes guardados em `examine_seen` (mais recentes primeiro)
+
+
 class State:
     """Dicionario com carga/gravação em disco.
 
     Chaves usadas hoje:
     - ``examine_last_post_url``: URL do ultimo post do Examine processado (semente).
-    - ``examine_seen``: lista de shortcodes ja vistos/processados do Instagram.
+    - ``examine_seen``: shortcodes recentes ja vistos do Instagram (limitados a
+      `LIMITE_SEEN`, mais novos primeiro, para o arquivo nao crescer sem limite).
     """
 
     def __init__(self, path: Path, data: dict[str, Any] | None = None) -> None:
@@ -41,11 +45,12 @@ class State:
         values = self.data.get(key) or []
         return set(values) if isinstance(values, list) else set()
 
-    def add_seen(self, key: str, values: list[str]) -> None:
-        merged = self.seen(key)
-        for value in values:
-            merged.add(value)
-        self.data[key] = sorted(merged)
+    def add_seen(self, key: str, values: list[str], limite: int = LIMITE_SEEN) -> None:
+        """Junta `values` (mais recentes primeiro) com o que ja existia, aparando o fim."""
+        antigos = self.data.get(key)
+        anteriores = [item for item in antigos or [] if isinstance(item, str)]
+        merged = list(dict.fromkeys([*values, *anteriores]))
+        self.data[key] = merged[:limite] if limite > 0 else merged
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

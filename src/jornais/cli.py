@@ -18,16 +18,14 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 from . import comprimir, compose, http, notify, precos, render, site
 from .markets import ORDER, REGISTRY, examine, safe_fetch
-from .model import Context, MarketCfg, MarketResult
+from .model import Context, MarketCfg, MarketResult, SP, describe_error
 from .state import State
 
-SP = ZoneInfo("America/Sao_Paulo")
 DEFAULT_CONFIG = "config.toml"
 
 
@@ -45,6 +43,7 @@ class Row:
     itens: int = 0
     precos: int = 0
     fonte: str = "nenhuma"
+    erro_precos: str | None = None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,16 +130,25 @@ def cmd_run(args: argparse.Namespace) -> int:
             cfg = config["markets"][key]
             # o Examine tem preco estruturado no site: nao gasta OCR no encarte em imagem
             ocr_mercado = None if (key == "examine" and cfg.get("precos_site", False)) else ocr
-            row = publish(
-                result,
-                data_dir,
-                today,
-                compressao=compressao,
-                ocr=ocr_mercado,
-                ler_precos=lendo_precos,
-            )
+            try:
+                row = publish(
+                    result,
+                    data_dir,
+                    today,
+                    compressao=compressao,
+                    ocr=ocr_mercado,
+                    ler_precos=lendo_precos,
+                )
+            except Exception as exc:  # noqa: BLE001 - um mercado nao aborta os demais
+                result.status = "failed"
+                result.error = result.error or describe_error(exc)
+                row = Row(result=result)
             if lendo_precos and key == "examine" and cfg.get("precos_site", False):
-                ler_precos_site(row, cfg, data_dir, today)
+                try:
+                    ler_precos_site(row, cfg, data_dir, today)
+                except Exception as exc:  # noqa: BLE001 - o PDF do jornal ainda vai
+                    row.erro_precos = describe_error(exc)
+                    print(f"[examine] catalogo do site falhou: {row.erro_precos}", file=sys.stderr)
             rows.append(row)
             print(f"{key}: {describe(row)}", file=sys.stdout if row.path else sys.stderr)
     finally:
@@ -340,7 +348,16 @@ def publish(
 
     # leitura a partir dos brutos: o PDF do dia pode estar comprimido (modo `forte`
     # rasteriza as paginas, o que apagaria a camada de texto)
-    leitura = precos.extract_arquivos(precos.arquivos_brutos(data_dir, today, result.key), result.key, ocr)
+    try:
+        leitura = precos.extract_arquivos(
+            precos.arquivos_brutos(data_dir, today, result.key), result.key, ocr
+        )
+    except Exception as exc:  # noqa: BLE001 - o PDF ja esta gravado; so a contagem falhou
+        row.fonte = "erro"
+        row.erro_precos = describe_error(exc)
+        print(f"[{result.key}] leitura de precos falhou: {row.erro_precos}", file=sys.stderr)
+        return row
+
     row.itens, row.precos, row.fonte = leitura.itens, len(leitura.precos), leitura.fonte
     if leitura.precos:
         _, row.csv = precos.write(leitura.precos, data_dir, today, result.key)
@@ -403,6 +420,8 @@ def summary_message(today: date, rows: list[Row]) -> str:
 
 
 def _precos_texto(row: Row) -> str:
+    if row.erro_precos:
+        return f"precos: falha ({row.erro_precos})"
     if row.precos:
         if row.fonte == "site":
             return f"{row.precos} produtos (site)"
@@ -416,6 +435,7 @@ def _motivo_vazio(fonte: str) -> str:
         "ocr": "OCR nao leu nenhum preco",
         "sem-ocr": "precos: OCR indisponivel (tesseract nao encontrado)",
         "nenhuma": "precos: encarte em imagem e OCR desligado",
+        "erro": "precos: falha na leitura",
         "desligado": "",
     }.get(fonte, "sem precos")
 

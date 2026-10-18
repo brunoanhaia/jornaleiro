@@ -74,6 +74,9 @@ def _request(
     retries: int = 3,
     **kwargs: Any,
 ) -> httpx.Response:
+    if retries < 1:
+        raise ValueError(f"retries precisa ser >= 1 (recebido {retries})")
+
     last: BaseException | None = None
     for attempt in range(1, retries + 1):
         try:
