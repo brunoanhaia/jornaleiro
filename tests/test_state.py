@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from jornais import state
@@ -68,3 +69,15 @@ def test_add_seen_sem_limite_usa_o_padrao(tmp_path: Path) -> None:
 
     assert len(estado.data["examine_seen"]) == state.LIMITE_SEEN
     assert estado.data["examine_seen"][0] == "n0"
+
+
+def test_save_grava_atomico_e_nao_deixa_temporario(tmp_path: Path) -> None:
+    caminho = tmp_path / "state.json"
+    estado = State(caminho)
+    estado.set("x", 1)
+    estado.set("examine_seen", ["abc"])
+
+    estado.save()
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["state.json"]
+    assert json.loads(caminho.read_text(encoding="utf-8")) == {"x": 1, "examine_seen": ["abc"]}

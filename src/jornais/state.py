@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 
@@ -53,8 +55,24 @@ class State:
         self.data[key] = merged[:limite] if limite > 0 else merged
 
     def save(self) -> None:
+        """Grava de forma atomica: temporario na mesma pasta + `os.replace`.
+
+        Se o processo morrer no meio, o `state.json` antigo continua valido (antes,
+        um `write_text` interrompido deixava o arquivo pela metade).
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self.data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        conteudo = json.dumps(self.data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        with NamedTemporaryFile(
+            "w",
             encoding="utf-8",
-        )
+            dir=self.path.parent,
+            prefix=f".{self.path.name}.",
+            delete=False,
+        ) as arquivo:
+            arquivo.write(conteudo)
+            temporario = Path(arquivo.name)
+        try:
+            os.replace(temporario, self.path)
+        except OSError:
+            temporario.unlink(missing_ok=True)
+            raise

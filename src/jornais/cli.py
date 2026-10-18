@@ -12,9 +12,11 @@ Subcomandos:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tomllib
@@ -27,7 +29,7 @@ from dotenv import load_dotenv
 
 from . import comprimir, compose, http, notify, precos, render, site
 from .markets import ORDER, REGISTRY, examine, safe_fetch
-from .model import Context, MarketCfg, MarketResult, SP, describe_error
+from .model import Asset, Context, MarketCfg, MarketResult, SP, describe_error
 from .state import State
 
 DEFAULT_CONFIG = "config.toml"
@@ -48,6 +50,9 @@ class Row:
     precos: int = 0
     fonte: str = "nenhuma"
     erro_precos: str | None = None
+    sha: str = ""
+    aviso: str = ""
+    pular_envio: bool = False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -120,6 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--sem-comprimir", action="store_true", help="nao comprime os PDFs")
     run.add_argument("--sem-ocr", action="store_true", help="nao roda OCR nos encartes em imagem")
     run.add_argument("--sem-precos", action="store_true", help="nao le nem envia precos (so os jornais)")
+    run.add_argument("--forcar", action="store_true", help="reenvia mesmo com o encarte identico ao ultimo envio")
     run.add_argument("--data-dir")
     run.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
     run.set_defaults(handler=cmd_run)
@@ -193,6 +199,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         try:
             for key in keys:
                 result = safe_fetch(REGISTRY[key], ctx, config["markets"][key])
+                sha = _sha_assets(result.assets)
                 cfg = config["markets"][key]
                 # o Examine tem preco estruturado no site: nao gasta OCR no encarte em imagem
                 ocr_mercado = None if (key == "examine" and cfg.get("precos_site", False)) else ocr
@@ -209,6 +216,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                     result.status = "failed"
                     result.error = result.error or describe_error(exc)
                     row = Row(result=result)
+                row.sha = sha
                 if lendo_precos and key == "examine" and cfg.get("precos_site", False):
                     try:
                         ler_precos_site(row, cfg, data_dir, today)
@@ -221,18 +229,32 @@ def cmd_run(args: argparse.Namespace) -> int:
             renderer.close()
             http.close()
 
-        state.save()
+        estado_mercados = state.get("mercados")
+        if not isinstance(estado_mercados, dict):
+            estado_mercados = {}
+        for row in rows:
+            anterior = estado_mercados.get(row.result.key)
+            anterior = anterior if isinstance(anterior, dict) else {}
+            if row.path is not None and row.sha:
+                row.pular_envio = bool(
+                    not args.forcar and anterior.get("enviado") and anterior.get("sha") == row.sha
+                )
+            if row.path is not None:
+                row.aviso = _aviso_do_mercado(row, anterior, today)
 
         message = summary_message(today, rows)
         print(message)
 
+        falhas: list[str] = []
         if not args.no_send:
             telegram = notify.Telegram(token, chat_id)
             telegram.send_message(message)
-            notify.send_report(
+            falhas = notify.send_report(
                 telegram,
                 documentos(rows, enviar_precos=lendo_precos and config_enviar_precos(config)),
             )
+        _registrar_envio(state, rows, today, falhas, sem_envio=args.no_send)
+        state.save()
         return exit_code(rows)
 
 
@@ -476,7 +498,7 @@ def documentos(rows: list[Row], *, enviar_precos: bool = True) -> list[tuple[str
     """Documentos na ordem de envio: PDF do mercado e, logo depois, a leitura de precos."""
     itens: list[tuple[str, Path, str]] = []
     for row in rows:
-        if row.path is None:
+        if row.path is None or row.pular_envio:
             continue
         itens.append((row.result.label, row.path, caption(row)))
         if enviar_precos and row.csv is not None:
@@ -521,6 +543,8 @@ def summary_message(today: date, rows: list[Row]) -> str:
         suffix = f" - {detail}" if detail else ""
         precos_texto = _precos_texto(row)
         extra = f" | {precos_texto}" if precos_texto else ""
+        if row.aviso:
+            extra += f" | AVISO: {row.aviso}"
         lines.append(f"{row.result.label} - {row.count} {row.unit}{suffix}{extra}")
     lines.append("Falhas: " + (", ".join(failures) if failures else "nenhuma"))
     return "\n".join(lines)
@@ -579,6 +603,110 @@ def exit_code(rows: list[Row]) -> int:
     if all(row.result.status == "failed" for row in rows):
         return 1
     return 0
+
+
+def _sha_assets(assets: list[Asset]) -> str:
+    """Impressao digital dos arquivos baixados (base do 'esse encarte ja foi')."""
+    if not assets:
+        return ""
+    digest = hashlib.sha256()
+    for asset in assets:
+        digest.update(asset.suffix.encode("ascii", "ignore"))
+        digest.update(b"\x00")
+        digest.update(asset.content)
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+_DATA_RE = re.compile(r"(\d{2})/(\d{2})(?:/(\d{4}))?")
+
+
+def _validade_fim(validity: str | None, hoje: date) -> date | None:
+    """Ultima data `dd/mm[/aaaa]` do texto de validade (o fim da janela).
+
+    Sem ano no texto, assume o ano corrente; se isso jogar a data mais de 6 meses
+    para tras, e virada de ano (encarte de janeiro ainda valido em dezembro).
+    """
+    if not validity:
+        return None
+    datas = _DATA_RE.findall(validity)
+    if not datas:
+        return None
+    dia, mes, ano = datas[-1]
+    try:
+        if ano:
+            return date(int(ano), int(mes), int(dia))
+        candidato = date(hoje.year, int(mes), int(dia))
+    except ValueError:
+        return None
+    if (hoje - candidato).days > 180:
+        try:
+            return date(hoje.year + 1, int(mes), int(dia))
+        except ValueError:
+            return candidato
+    return candidato
+
+
+def _dia_curto(iso: object) -> str:
+    try:
+        return f"{date.fromisoformat(str(iso)):%d/%m}"
+    except ValueError:
+        return "?"
+
+
+def _aviso_do_mercado(row: Row, anterior: dict, today: date) -> str:
+    """Avisos de operacao: encarte vencido, queda suspeita e envio repetido."""
+    avisos: list[str] = []
+    fim = _validade_fim(row.result.validity, today)
+    if fim is not None and fim < today:
+        avisos.append(f"encarte vencido em {fim:%d/%m}")
+    precos_antes = anterior.get("precos")
+    if (
+        isinstance(precos_antes, int)
+        and precos_antes >= 10
+        and row.fonte != "desligado"
+        and row.erro_precos is None
+        and row.precos < precos_antes / 2
+    ):
+        avisos.append(
+            f"queda suspeita de precos: {row.precos} agora, {precos_antes} em "
+            f"{_dia_curto(anterior.get('dia'))}"
+        )
+    if row.pular_envio:
+        avisos.append(f"nao reenviado: igual ao de {_dia_curto(anterior.get('dia'))}")
+    return "; ".join(avisos)
+
+
+def _registrar_envio(
+    state: State, rows: list[Row], today: date, falhas: list[str], *, sem_envio: bool
+) -> None:
+    """Anota no estado o sha/leitura de cada mercado e se aquele encarte foi enviado."""
+    mercados = state.get("mercados")
+    if not isinstance(mercados, dict):
+        mercados = {}
+    for row in rows:
+        if row.path is None or not row.sha:
+            continue
+        key = row.result.key
+        anterior = mercados.get(key)
+        anterior = anterior if isinstance(anterior, dict) else {}
+        enviado = bool(anterior.get("enviado")) and anterior.get("sha") == row.sha
+        if not sem_envio and not _falhou_no_envio(row, falhas):
+            enviado = True
+        mercados[key] = {
+            "sha": row.sha,
+            "dia": today.isoformat(),
+            "itens": row.itens,
+            "precos": row.precos,
+            "enviado": enviado,
+        }
+    state.set("mercados", mercados)
+
+
+def _falhou_no_envio(row: Row, falhas: list[str]) -> bool:
+    return any(
+        nome == row.result.label or nome.startswith(f"{row.result.label} (") for nome in falhas
+    )
 
 
 def localizar_config(explicito: str | None) -> Path:

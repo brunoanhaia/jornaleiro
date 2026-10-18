@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 
 from pypdf import PdfWriter
 
-from jornais import cli, render
+from jornais import cli, notify, render
 from jornais.model import SP, Asset, MarketResult
 
 
@@ -80,18 +80,19 @@ def prepara_run(tmp_path: Path, monkeypatch, mercados: dict) -> Path:
     return escreve_config(tmp_path, list(mercados))
 
 
-def roda_run(config: Path, data_dir: Path, only: str) -> int:
-    args = cli.build_parser().parse_args(
-        [
-            "run",
-            "--only", only,
-            "--no-send",
-            "--sem-comprimir",
-            "--sem-ocr",
-            "--config", str(config),
-            "--data-dir", str(data_dir),
-        ]
-    )
+def roda_run(config: Path, data_dir: Path, only: str, *extras: str, no_send: bool = True) -> int:
+    comando = [
+        "run",
+        "--only", only,
+        "--sem-comprimir",
+        "--sem-ocr",
+        "--config", str(config),
+        "--data-dir", str(data_dir),
+        *extras,
+    ]
+    if no_send:
+        comando.append("--no-send")
+    args = cli.build_parser().parse_args(comando)
     return args.handler(args)
 
 
@@ -211,3 +212,84 @@ def test_limpar_recusa_dias_negativos(tmp_path, capsys) -> None:
 
     assert cli.cmd_limpar(args) == 2
     assert "--dias" in capsys.readouterr().err
+
+
+class TelegramFalso:
+    """Telegram de mentira: registra documentos e mensagens."""
+
+    def __init__(self) -> None:
+        self.documentos: list[str] = []
+        self.mensagens: list[str] = []
+
+    def send_message(self, text: str) -> dict:
+        self.mensagens.append(text)
+        return {"ok": True}
+
+    def send_document(self, path: Path, caption: str) -> dict:
+        self.documentos.append(path.name)
+        return {"ok": True}
+
+
+def prepara_telegram(monkeypatch, fake: TelegramFalso) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.setattr(notify, "Telegram", lambda *_, **__: fake)
+
+
+def test_run_nao_reenvia_encarte_identico(tmp_path, monkeypatch) -> None:
+    telegram = TelegramFalso()
+    prepara_telegram(monkeypatch, telegram)
+    config = prepara_run(
+        tmp_path,
+        monkeypatch,
+        {"assai": mercado_falso("assai", "Assaí Atacadista", pdf_vazio())},
+    )
+    data_dir = tmp_path / "data"
+
+    assert roda_run(config, data_dir, "assai", no_send=False) == 0
+    assert telegram.documentos == ["assai.pdf"]
+    assert "nao reenviado" not in telegram.mensagens[0]
+
+    # segunda execucao no mesmo dia, mesmo conteudo: so a mensagem vai
+    assert roda_run(config, data_dir, "assai", no_send=False) == 0
+    assert telegram.documentos == ["assai.pdf"]
+    assert "nao reenviado: igual ao de " in telegram.mensagens[1]
+
+    # --forcar reenvia mesmo identico
+    assert roda_run(config, data_dir, "assai", "--forcar", no_send=False) == 0
+    assert telegram.documentos == ["assai.pdf", "assai.pdf"]
+
+
+def test_validade_fim_entende_formatos_reais() -> None:
+    hoje = date(2026, 10, 18)
+
+    assert cli._validade_fim("Preços válidos para 15/10/2026", hoje) == date(2026, 10, 15)
+    assert cli._validade_fim("12/10 a 19/10", hoje) == date(2026, 10, 19)
+    assert cli._validade_fim("válido até 17/10/2026", hoje) == date(2026, 10, 17)
+    assert cli._validade_fim("15/10 - 21/10", hoje) == date(2026, 10, 21)
+    assert cli._validade_fim("29/12 a 03/01", hoje) == date(2027, 1, 3)  # virada de ano
+    assert cli._validade_fim("sem data", hoje) is None
+    assert cli._validade_fim(None, hoje) is None
+
+
+def test_aviso_de_encarte_vencido_e_queda_suspeita() -> None:
+    resultado = MarketResult(
+        key="assai", label="Assaí", status="ok", validity="01/01/2020 a 02/01/2020"
+    )
+    row = cli.Row(result=resultado, path=Path("x.pdf"), precos=3, fonte="texto")
+
+    aviso = cli._aviso_do_mercado(row, {"precos": 100, "dia": "2026-10-10"}, date(2026, 10, 18))
+
+    assert "encarte vencido em 02/01" in aviso
+    assert "queda suspeita de precos: 3 agora, 100 em 10/10" in aviso
+
+
+def test_sha_dos_assets_muda_com_o_conteudo() -> None:
+    a = Asset(url="u", content=b"a", kind="pdf", suffix=".pdf")
+    b = Asset(url="u", content=b"b", kind="pdf", suffix=".pdf")
+
+    mesma_coisa = cli._sha_assets([Asset(url="outra", content=b"a", kind="pdf", suffix=".pdf")])
+
+    assert cli._sha_assets([a]) == mesma_coisa
+    assert cli._sha_assets([a]) != cli._sha_assets([b])
+    assert cli._sha_assets([]) == ""
