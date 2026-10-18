@@ -56,9 +56,16 @@ _RUIDO = re.compile(
     r"|carrefour.*"
     r"|sam’?s club.*"
     r"|ativada no\b.*"
+    r"|consulte\b.*"
     r"|esta p[áa]gina .*"
     r"|ofertas v[áa]lidas .*"
     r"|as ofertas deste box .*"
+    r"|imagem ilustrativa\b.*"
+    r"|interior de sp\b.*"
+    r"|tudo isso e muito mais.*"
+    r"|.*atacadaosa.*"
+    r"|.*atacadao_sa.*"
+    r"|\d+x(?:\s+\d+x)*"
     r"|bebida alco[óo]lica .*"
     r"|anos de idade\b.*"
     r"|lei (?:estadual|federal)\b.*"
@@ -84,6 +91,26 @@ _MAX_DESCRICAO = 200
 _TESSDATA_LOCAL = "~/.local/share/tesseract/usr/share/tesseract-ocr"
 _BINARIO_LOCAL = "~/.local/share/tesseract/usr/bin/tesseract"
 _ORDEM_FONTES = ("texto", "ocr", "sem-ocr", "nenhuma")  # ordem de exibicao da fonte combinada
+
+# mercados cujo PDF desenha "cards" soltos pela pagina: a ordem do fluxo de texto
+# embaralha nome e preco entre itens vizinhos e a leitura por coordenadas desempata
+_MERCADOS_COLUNAS = ("atacadao",)
+
+# ajustes da leitura por coordenadas (ver `_extract_colunas`)
+_COLUNAS_X_TOKENS = 25.0    # x maximo entre dois precos da mesma coluna
+_COLUNAS_Y_LINHA = 3.0      # y maximo entre fragmentos da mesma linha visual
+_COLUNAS_GAP_MINIMO = 50.0  # vao em y que pode separar dois itens da mesma coluna
+_COLUNAS_COBERTURA_NOME = 0.5  # fracao do vao que o bloco de nome cobre para manter junto
+_COLUNAS_BLOCO_X = 30.0     # x maximo entre linhas de um mesmo bloco de nome
+_COLUNAS_BLOCO_Y = 26.0     # y maximo entre linhas de um mesmo bloco de nome
+_COLUNAS_JANELA_Y = 90.0    # faixa em y em volta do item para achar o nome
+_COLUNAS_X_NOME = 220.0     # o nome fica a esquerda do preco, ate esta distancia
+_COLUNAS_ESPACO_NOME = 40.0 # vao em x que quebra a linha do nome
+_COLUNAS_PESO_X = 0.4       # x pesa menos: o nome costuma ficar longe a esquerda
+_COLUNAS_FRAGMENTO_MAX = 90 # nome de produto nao e um paragrafo
+_COLUNAS_X_RS = 40.0        # distancia maxima entre `R$` e o numero na mesma linha
+_RISCADO = re.compile(r"^(?:de:?|por:?)$", re.IGNORECASE)  # rotulo do preco cortado
+_GRAMATURA = re.compile(r"\d\s*(?:kg|g|ml|unid?)\b", re.IGNORECASE)  # fragmento so com peso
 
 
 @dataclass
@@ -191,6 +218,8 @@ def extract(dados: bytes, mercado: str, ocr: Ocr | None = None) -> Leitura:
 
     textos = page_texts(dados)
     if sum(len(texto) for texto in textos) >= _TEXT_CHARS_MINIMOS:
+        if mercado in _MERCADOS_COLUNAS:
+            return Leitura(_extract_colunas_pdf(dados, textos, mercado), "texto")
         precos = [
             preco
             for numero, texto in enumerate(textos, start=1)
@@ -291,6 +320,257 @@ def _ocr_imagem(dados: bytes, ocr: Ocr) -> str:
         return ""
     finally:
         caminho.unlink(missing_ok=True)
+
+
+def _extract_colunas_pdf(dados: bytes, textos: list[str], mercado: str) -> list[Preco]:
+    """Le o PDF por coordenadas, pagina a pagina; pagina sem card cai no fluxo de texto."""
+    paginas = PdfReader(BytesIO(dados)).pages
+    precos: list[Preco] = []
+    for numero, texto in enumerate(textos, start=1):
+        da_pagina = _extract_colunas(_fragmentos(paginas[numero - 1]), mercado, numero)
+        precos.extend(da_pagina if da_pagina else _extract_page(texto, mercado, numero))
+    return precos
+
+
+def _fragmentos(page) -> list[tuple[float, float, str]]:
+    """Texto da pagina com a posicao (x, y) de cada fragmento (visitor do pypdf)."""
+    saida: list[tuple[float, float, str]] = []
+
+    def visitante(texto: str, cm, tm, font_dict, font_size) -> None:
+        x = cm[0] * tm[4] + cm[2] * tm[5] + cm[4]
+        y = cm[1] * tm[4] + cm[3] * tm[5] + cm[5]
+        limpo = " ".join(texto.split())
+        if limpo:
+            saida.append((x, y, limpo))
+
+    page.extract_text(visitor_text=visitante)
+    return saida
+
+
+def _extract_colunas(frags: list[tuple[float, float, str]], mercado: str, pagina: int) -> list[Preco]:
+    """Le a pagina por coordenadas: nome a esquerda, precos empilhados a direita.
+
+    Encartes como o do Atacadao desenham cada item como um card: o nome fica a
+    esquerda e ate tres linhas de preco (varejo/atacado, app, cartao) empilham na
+    mesma coluna x. A ordem do fluxo de texto nao segue esses cards e troca o preco
+    de um item com o nome do vizinho; aqui os fragmentos viram coordenadas:
+
+    - cada `R$` vira um "slot" de preco (x, y, valor), junto do numero da linha;
+    - slots da mesma coluna x, sem vao grande em y (ou com o vao coberto pelo nome
+      do card), formam um item;
+    - cada fragmento de nome vai para o item que esta a sua direita na mesma faixa.
+
+    Uma pagina fora desse desenho devolve lista vazia (e o fluxo de texto assume).
+    """
+    # o preco riscado (`de: R$ 9,99 por:`) some por inteiro, com o rotulo junto
+    ys_riscados = [y for _, y, texto in frags if _RISCADO.match(texto.strip(" -–—•*()[]"))]
+    if ys_riscados:
+        frags = [frag for frag in frags if not any(abs(frag[1] - y) <= 2.5 for y in ys_riscados)]
+
+    itens = _itens_da_pagina(_slots_de_preco(frags), _blocos_de_nome(frags))
+    if not itens:
+        return []
+
+    nomes: list[list[tuple[float, float, str]]] = [[] for _ in itens]
+    for x, y, texto in frags:
+        limpo = _fragmento_de_nome(texto)
+        if not limpo:
+            continue
+        melhor = _melhor_item(itens, x, y, so_direita=True)
+        if melhor is None:  # desenho fora do padrao: aceita nome de qualquer lado
+            melhor = _melhor_item(itens, x, y, so_direita=False)
+        if melhor is not None:
+            nomes[melhor].append((x, y, limpo))
+
+    precos: list[Preco] = []
+    ordem = 0
+    for posicao in sorted(
+        range(len(itens)), key=lambda i: (-_centro(itens[i])[1], _centro(itens[i])[0])
+    ):
+        produto = _nome_do_item(nomes[posicao])
+        for _, _, valor in sorted(itens[posicao], key=lambda slot: -slot[1]):
+            ordem += 1
+            precos.append(Preco(mercado, pagina, produto, valor, ordem))
+    _classificar_tipos(precos, mercado)
+    return precos
+
+
+def _numero_de(texto: str) -> float | None:
+    """Valor de `123,45` (aceita `R$` colado e espacos); `None` quando nao e preco."""
+    limpo = texto.strip(" -–—•*()[]").replace(" ", "")
+    if limpo.startswith("R$"):
+        limpo = limpo[2:]
+    casamento = _NUMERO.fullmatch(limpo)
+    if not casamento:
+        return None
+    return float(f"{casamento.group(1).replace('.', '')}.{casamento.group(2)}")
+
+
+def _linhas_visuais(frags: list[tuple[float, float, str]]) -> list[list[tuple[float, float, str]]]:
+    """Agrupa fragmentos em linhas de texto (y parecido), ordenados por x."""
+    linhas: list[list[tuple[float, float, str]]] = []
+    for frag in sorted(frags, key=lambda f: (-f[1], f[0])):
+        if linhas and abs(linhas[-1][0][1] - frag[1]) <= _COLUNAS_Y_LINHA:
+            linhas[-1].append(frag)
+        else:
+            linhas.append([frag])
+    return [sorted(linha, key=lambda f: f[0]) for linha in linhas]
+
+
+def _slots_de_preco(frags: list[tuple[float, float, str]]) -> list[tuple[float, float, float]]:
+    """Precos soltos na pagina: (x, y, valor), com `R$` e numero da mesma linha juntos."""
+    slots: list[tuple[float, float, float]] = []
+    for linha in _linhas_visuais(frags):
+        posicao = 0
+        while posicao < len(linha):
+            x, y, texto = linha[posicao]
+            valor = None
+            if texto.strip(" -–—•*()[]") == "R$" and posicao + 1 < len(linha):
+                vizinho = linha[posicao + 1]
+                if vizinho[0] - x <= _COLUNAS_X_RS:
+                    valor = _numero_de(vizinho[2])
+                    if valor is not None:
+                        posicao += 1  # o numero ja virou preco
+            else:
+                valor = _numero_de(texto)
+            if valor is not None:
+                slots.append((x, y, valor))
+            posicao += 1
+    return slots
+
+
+def _fragmento_de_nome(texto: str) -> str:
+    """Limpa um fragmento e responde se ele pode ser nome de produto (senao, "")."""
+    limpo = texto.strip(" -–—•*()[]").strip()
+    if (
+        not limpo
+        or limpo == "R$"
+        or _numero_de(limpo) is not None
+        or _RISCADO.match(limpo)
+        or not (_PALAVRA.search(limpo) or _GRAMATURA.search(limpo))
+        or len(limpo) > _COLUNAS_FRAGMENTO_MAX
+        or _RUIDO.match(limpo)
+        or _SECAO.match(limpo)
+    ):
+        return ""
+    return limpo
+
+
+def _blocos_de_nome(frags: list[tuple[float, float, str]]) -> list[tuple[float, float, float]]:
+    """Junta os fragmentos de nome em blocos: (x, y_topo, y_base) de cada card.
+
+    Linhas de um mesmo nome ficam coladas (mesmo x, y a ~12 pontos uma da outra);
+    nomes de cards diferentes ficam longe. E esse bloco que diz se um vao grande
+    entre dois precos da mesma coluna e dentro do card (nome entre os precos) ou
+    a fronteira com o card de baixo (nome ao pe do card de cima): ver
+    `_itens_da_pagina`.
+    """
+    nomes: list[tuple[float, float]] = []
+    for x, y, texto in frags:
+        if _fragmento_de_nome(texto):
+            nomes.append((x, y))
+    nomes.sort(key=lambda nome: (-nome[1], nome[0]))
+    blocos: list[list[float]] = []
+    for x, y in nomes:
+        for bloco in reversed(blocos):
+            if (
+                abs(bloco[0] - x) <= _COLUNAS_BLOCO_X
+                and bloco[2] - _COLUNAS_BLOCO_Y <= y <= bloco[1] + _COLUNAS_BLOCO_Y
+            ):
+                bloco[0] = min(bloco[0], x)
+                bloco[1] = max(bloco[1], y)
+                bloco[2] = min(bloco[2], y)
+                break
+        else:
+            blocos.append([x, y, y])
+    return [(bloco[0], bloco[1], bloco[2]) for bloco in blocos]
+
+
+def _itens_da_pagina(
+    slots: list[tuple[float, float, float]],
+    blocos: list[tuple[float, float, float]],
+) -> list[list[tuple[float, float, float]]]:
+    """Junta os slots em itens: mesma coluna x, cortando nos vaos entre cards.
+
+    Um vao grande em y pode ser entre dois precos do mesmo card (ex.: o preco do
+    app em cima e o cheio embaixo do nome) ou entre dois cards empilhados. Quem
+    decide e o bloco de nome do card: cobrindo boa parte do vao, e dentro do card;
+    sem cobrir, e a fronteira com o proximo.
+    """
+    colunas: list[list[tuple[float, float, float]]] = []
+    for slot in sorted(slots, key=lambda s: (s[0], -s[1])):
+        if colunas and slot[0] - colunas[-1][-1][0] <= _COLUNAS_X_TOKENS:
+            colunas[-1].append(slot)
+        else:
+            colunas.append([slot])
+    itens: list[list[tuple[float, float, float]]] = []
+    for coluna in colunas:
+        coluna.sort(key=lambda s: -s[1])
+        atual = [coluna[0]]
+        for ante, slot in zip(coluna, coluna[1:]):
+            if ante[1] - slot[1] > _COLUNAS_GAP_MINIMO and not _vao_coberto(ante, slot, blocos):
+                itens.append(atual)
+                atual = []
+            atual.append(slot)
+        itens.append(atual)
+    return itens
+
+
+def _vao_coberto(
+    ante: tuple[float, float, float],
+    slot: tuple[float, float, float],
+    blocos: list[tuple[float, float, float]],
+) -> bool:
+    """Diz se um bloco de nome a esquerda do preco cobre boa parte do vao em y."""
+    vao = ante[1] - slot[1]
+    for x_bloco, y_topo, y_base in blocos:
+        if not 1 <= slot[0] - x_bloco <= _COLUNAS_X_NOME:
+            continue
+        if min(y_topo, ante[1]) - max(y_base, slot[1]) > _COLUNAS_COBERTURA_NOME * vao:
+            return True
+    return False
+
+
+def _centro(item: list[tuple[float, float, float]]) -> tuple[float, float]:
+    return (
+        sum(slot[0] for slot in item) / len(item),
+        sum(slot[1] for slot in item) / len(item),
+    )
+
+
+def _melhor_item(
+    itens: list[list[tuple[float, float, float]]], x: float, y: float, so_direita: bool
+) -> int | None:
+    """Item mais proximo do fragmento (x pesa menos que y).
+
+    Com `so_direita`, so aceita item cujo bloco de precos esta a direita do nome:
+    sem esse corte o nome de um item rouba o preco do item anterior da mesma faixa.
+    """
+    melhor = None
+    for posicao, item in enumerate(itens):
+        cx, cy = _centro(item)
+        if abs(y - cy) > _COLUNAS_JANELA_Y:
+            continue
+        if so_direita and not 0 <= cx - x <= _COLUNAS_X_NOME:
+            continue
+        distancia = ((cx - x) * _COLUNAS_PESO_X) ** 2 + (y - cy) ** 2
+        if melhor is None or distancia < melhor[0]:
+            melhor = (distancia, posicao)
+    return None if melhor is None else melhor[1]
+
+
+def _nome_do_item(fragmentos: list[tuple[float, float, str]]) -> str:
+    """Junta os fragmentos do item em linhas (quebrando em vaos grandes de x)."""
+    pedacos: list[list[tuple[float, float, str]]] = []
+    for linha in _linhas_visuais(fragmentos):
+        atual = [linha[0]]
+        for frag in linha[1:]:
+            if frag[0] - atual[-1][0] > _COLUNAS_ESPACO_NOME:
+                pedacos.append(atual)
+                atual = []
+            atual.append(frag)
+        pedacos.append(atual)
+    return " ".join(" ".join(frag[2] for frag in pedaco) for pedaco in pedacos)[:_MAX_DESCRICAO]
 
 
 def _extract_page(texto: str, mercado: str, pagina: int, limpar: bool = False) -> list[Preco]:

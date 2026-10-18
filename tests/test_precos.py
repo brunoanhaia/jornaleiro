@@ -258,3 +258,187 @@ def test_extract_arquivos_combina_fontes(monkeypatch, tmp_path) -> None:
 
     assert leitura.fonte == "texto+sem-ocr"
     assert [preco.preco for preco in leitura.precos] == [9.99]
+
+
+# --- leitura por coordenadas (Atacadao) ---------------------------------------
+# Os fragmentos abaixo sao recortes reais do PDF de 15/10/2026 (x, y, texto):
+# o nome do card fica a esquerda e o bloco de 1-3 precos empilha na mesma coluna.
+
+def test_colunas_pareia_nome_a_esquerda_e_nao_troca_itens_vizinhos() -> None:
+    frags = [
+        (24.0, 652.0, "Arroz Bulnez"),
+        (24.0, 645.0, "Agulhinha Tipo 1"),
+        (78.0, 720.0, "R$"),
+        (82.0, 720.0, "19,79"),
+        (78.0, 686.0, "R$"),
+        (82.0, 686.0, "18,89"),
+        (78.0, 644.0, "R$"),
+        (82.0, 644.0, "16,99"),
+        (150.0, 667.0, "Feijão Carioca"),
+        (150.0, 660.0, "Bulnez"),
+        (205.0, 723.0, "R$"),
+        (209.0, 723.0, "7,79"),
+        (205.0, 689.0, "R$"),
+        (209.0, 689.0, "7,59"),
+        (205.0, 648.0, "R$"),
+        (209.0, 648.0, "6,79"),
+    ]
+
+    rows = precos._extract_colunas(frags, "atacadao", 1)
+
+    assert [(r.produto, r.preco, r.ordem, r.tipo) for r in rows] == [
+        ("Feijão Carioca Bulnez", 7.79, 1, "varejo/atacado"),
+        ("Feijão Carioca Bulnez", 7.59, 2, "app"),
+        ("Feijão Carioca Bulnez", 6.79, 3, "app/cartao"),
+        ("Arroz Bulnez Agulhinha Tipo 1", 19.79, 4, "varejo/atacado"),
+        ("Arroz Bulnez Agulhinha Tipo 1", 18.89, 5, "app"),
+        ("Arroz Bulnez Agulhinha Tipo 1", 16.99, 6, "app/cartao"),
+    ]
+
+
+def test_colunas_ignora_preco_riscado_e_ruido_de_layout() -> None:
+    frags = [
+        # card do iogurte: o "de: R$ 3,29 por:" some; o preco valido fica abaixo
+        (49.7, 775.8, "Iogurte Frutap"),
+        (49.7, 763.8, "Morango"),
+        (49.7, 751.8, "Pouch com 90g"),
+        (158.8, 787.3, "de:"),
+        (171.7, 787.3, "R$"),
+        (177.2, 787.3, "3,29"),
+        (201.5, 787.3, "por:"),
+        (147.0, 748.8, "R$"),
+        (155.6, 748.8, "1,99"),
+        (147.0, 700.0, "Limite máximo de 6 un"),
+        (150.0, 690.0, "Consulte condições."),
+        # card da cebola, mais abaixo
+        (83.9, 126.0, "Cebola"),
+        (83.9, 115.0, "Quilo"),
+        (146.7, 193.3, "R$"),
+        (150.8, 193.3, "5,99"),
+        (146.9, 160.7, "R$"),
+        (151.0, 160.7, "5,49"),
+        (146.7, 121.3, "R$"),
+        (150.8, 121.3, "4,79"),
+    ]
+
+    rows = precos._extract_colunas(frags, "atacadao", 1)
+
+    assert [(r.produto, r.preco) for r in rows] == [
+        ("Iogurte Frutap Morango Pouch com 90g", 1.99),
+        ("Cebola Quilo", 5.99),
+        ("Cebola Quilo", 5.49),
+        ("Cebola Quilo", 4.79),
+    ]
+
+
+def test_colunas_separa_dois_itens_da_mesma_coluna() -> None:
+    """O vao grande em y separa dois cards empilhados na mesma coluna de precos."""
+    frags = [
+        (24.0, 652.0, "Arroz Bulnez"),
+        (78.0, 720.0, "R$"),
+        (82.0, 720.0, "19,79"),
+        (78.0, 686.0, "R$"),
+        (82.0, 686.0, "18,89"),
+        (24.0, 340.0, "Cebola"),
+        (78.0, 420.0, "R$"),
+        (82.0, 420.0, "5,99"),
+        (78.0, 380.0, "R$"),
+        (82.0, 380.0, "5,49"),
+    ]
+
+    rows = precos._extract_colunas(frags, "atacadao", 1)
+
+    assert [(r.produto, r.preco) for r in rows] == [
+        ("Arroz Bulnez", 19.79),
+        ("Arroz Bulnez", 18.89),
+        ("Cebola", 5.99),
+        ("Cebola", 5.49),
+    ]
+
+
+def test_colunas_mantem_junto_o_vao_coberto_por_bloco_de_nome() -> None:
+    """Card com desconto no app: preco do app em cima e o cheio embaixo do nome."""
+    frags = [
+        (86.5, 788.4, "Salgadinho Elma Chips"),
+        (86.5, 776.6, "Cheetos"),
+        (86.5, 764.8, "Vários sabores"),
+        (86.5, 753.0, "Pacote com 33g/35g/36g/40g"),
+        (236.3, 811.6, "R$"),
+        (244.4, 811.6, "2,23"),
+        (232.6, 753.2, "R$"),
+        (241.0, 753.2, "2,48"),
+    ]
+
+    rows = precos._extract_colunas(frags, "atacadao", 1)
+
+    assert [(r.produto, r.preco, r.tipo) for r in rows] == [
+        ("Salgadinho Elma Chips Cheetos Vários sabores Pacote com 33g/35g/36g/40g", 2.23, "app"),
+        ("Salgadinho Elma Chips Cheetos Vários sabores Pacote com 33g/35g/36g/40g", 2.48, "varejo/atacado"),
+    ]
+
+
+def test_colunas_corta_o_vao_grande_sem_nome_cobrindo() -> None:
+    """Sem bloco de nome entre os precos, o vao grande vira fronteira de cards."""
+    frags = [
+        (236.3, 811.6, "R$"),
+        (244.4, 811.6, "2,23"),
+        (232.6, 753.2, "R$"),
+        (241.0, 753.2, "2,48"),
+    ]
+
+    rows = precos._extract_colunas(frags, "atacadao", 1)
+
+    assert [(r.produto, r.preco) for r in rows] == [("", 2.23), ("", 2.48)]
+
+
+def test_colunas_sem_preco_devolve_vazio() -> None:
+    """Pagina sem card nenhum: o fluxo de texto assume (fallback)."""
+    frags = [(10.0, 500.0, "Bem-vindo ao encarte de ofertas")]
+
+    assert precos._extract_colunas(frags, "atacadao", 1) == []
+
+
+def test_extract_do_atacadao_usa_leitura_por_coordenadas(monkeypatch) -> None:
+    monkeypatch.setattr(precos, "page_texts", lambda dados: ["texto " * 60])
+    sentinela = [precos.Preco("atacadao", 1, "Teste", 1.0, 1)]
+    chamadas: list[str] = []
+    monkeypatch.setattr(
+        precos,
+        "_extract_colunas_pdf",
+        lambda dados, textos, mercado: chamadas.append("colunas") or sentinela,
+    )
+    monkeypatch.setattr(
+        precos,
+        "_extract_page",
+        lambda texto, mercado, pagina, limpar=False: chamadas.append("texto") or sentinela,
+    )
+
+    de_atacadao = precos.extract(b"%PDF-1.4 falso", "atacadao")
+    assert de_atacadao.precos == sentinela
+    assert chamadas == ["colunas"]  # so o Atacadao le por coordenadas
+
+    chamadas.clear()
+    de_covabra = precos.extract(b"%PDF-1.4 falso", "covabra")
+    assert de_covabra.precos == sentinela
+    assert chamadas == ["texto"]
+
+
+def test_colunas_pdf_usa_o_texto_quando_a_pagina_nao_tem_card(monkeypatch) -> None:
+    class LeitorFalso:
+        def __init__(self, dados: bytes) -> None:
+            self.pages = ["pagina 1", "pagina 2"]
+
+    monkeypatch.setattr(precos, "PdfReader", LeitorFalso)
+    card = [(50.0, 100.0, "Cebola"), (100.0, 100.0, "R$"), (104.0, 100.0, "5,99")]
+    monkeypatch.setattr(precos, "_fragmentos", lambda page: card if page == "pagina 1" else [])
+    sentinela = precos.Preco("atacadao", 2, "Do fluxo de texto", 9.90, 1)
+    monkeypatch.setattr(
+        precos, "_extract_page", lambda texto, mercado, pagina, limpar=False: [sentinela]
+    )
+
+    linhas = precos._extract_colunas_pdf(b"fake", ["texto 1", "texto 2"], "atacadao")
+
+    assert [(r.produto, r.preco, r.pagina) for r in linhas] == [
+        ("Cebola", 5.99, 1),
+        ("Do fluxo de texto", 9.90, 2),
+    ]
