@@ -6,6 +6,7 @@ Subcomandos:
     jornais site-precos    le o catalogo do site do Examine (GraphQL)
     jornais render <url>   imprime o texto renderizado (debug do renderizador)
     jornais examine-probe  mostra a cadeia de descoberta do encarte do Examine
+    jornais historico      consulta o historico de precos (SQLite derivado dos CSVs)
     jornais limpar         remove coletas antigas de data/ (retencao)
 """
 
@@ -27,12 +28,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from . import comprimir, compose, http, notify, precos, render, site
+from . import comprimir, compose, historico, http, notify, precos, render, site
 from .markets import ORDER, REGISTRY, examine, safe_fetch
 from .model import Asset, Context, MarketCfg, MarketResult, SP, describe_error
 from .state import State
 
 DEFAULT_CONFIG = "config.toml"
+DIAS_QUEDAS_RESUMO = 30  # janela das "quedas" que entram no resumo do run
 
 
 @dataclass
@@ -165,6 +167,17 @@ def build_parser() -> argparse.ArgumentParser:
     limpar.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
     limpar.set_defaults(handler=cmd_limpar)
 
+    hist = sub.add_parser("historico", help="consulta o historico de precos (SQLite em data/)")
+    hist.add_argument("--reindex", action="store_true", help="reconstroi o banco a partir dos CSVs")
+    hist.add_argument("--produto", help="mostra os precos de um produto (trecho do nome)")
+    hist.add_argument("--quedas", action="store_true", help="maiores variacoes entre as duas ultimas leituras")
+    hist.add_argument("--dias", type=int, default=90, help="janela em dias (padrao: 90)")
+    hist.add_argument("--limite", type=int, default=20, help="maximo de linhas (padrao: 20)")
+    hist.add_argument("--db", help="caminho do banco (padrao: data/historico.sqlite)")
+    hist.add_argument("--data-dir")
+    hist.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    hist.set_defaults(handler=cmd_historico)
+
     return parser
 
 
@@ -242,7 +255,22 @@ def cmd_run(args: argparse.Namespace) -> int:
             if row.path is not None:
                 row.aviso = _aviso_do_mercado(row, anterior, today)
 
+        # o banco e um indice dos CSVs: so atualiza quando ele ja existe (nunca derruba o run)
+        quedas_resumo: list[historico.Queda] = []
+        caminho_db = db_historico(config, data_dir, config_path)
+        if caminho_db.exists():
+            try:
+                historico.registrar_dia(data_dir, today, caminho_db)
+                limite_quedas = config_quedas_resumo(config)
+                if limite_quedas > 0:
+                    desde = today - timedelta(days=DIAS_QUEDAS_RESUMO)
+                    quedas_resumo = historico.quedas(caminho_db, desde, limite_quedas)
+            except Exception as exc:  # noqa: BLE001 - o historico nunca derruba o run
+                print(f"[historico] {describe_error(exc)}", file=sys.stderr)
+
         message = summary_message(today, rows)
+        if quedas_resumo:
+            message += _quedas_texto(quedas_resumo)
         print(message)
 
         falhas: list[str] = []
@@ -444,7 +472,61 @@ def cmd_limpar(args: argparse.Namespace) -> int:
             shutil.rmtree(pasta)
             print(f"removida: {pasta} ({tamanho / 1048576:.1f} MB)")
     acao = "seriam removidas" if args.dry_run else "removidas"
+    if not args.dry_run and alvos:
+        caminho_db = db_historico(config, data_dir, config_path)
+        if caminho_db.exists():
+            contagens = historico.reindexar(data_dir, caminho_db)
+            print(
+                f"banco do historico reindexado: {contagens['precos']} precos, "
+                f"{contagens['coletas']} coletas"
+            )
     print(f"{acao} {len(alvos)} coleta(s), {total / 1048576:.1f} MB (retendo {args.dias} dia(s))")
+    return 0
+
+
+def cmd_historico(args: argparse.Namespace) -> int:
+    """Consulta o historico de precos (SQLite derivado dos CSVs de `data/`)."""
+    load_dotenv()
+    config_path = localizar_config(args.config)
+    config = load_config(config_path)
+    data_dir = resolver_data_dir(args, config, config_path)
+    db = Path(args.db) if args.db else db_historico(config, data_dir, config_path)
+
+    if args.reindex or not db.exists():
+        contagens = historico.reindexar(data_dir, db)
+        print(
+            f"banco reconstruido: {contagens['precos']} precos, {contagens['coletas']} coletas, "
+            f"{contagens['site']} produtos do site em {contagens['dias']} dia(s) -> {db}"
+        )
+        if not args.produto and not args.quedas:
+            return 0
+
+    hoje = datetime.now(SP).date()
+    desde = hoje - timedelta(days=args.dias)
+    if args.produto:
+        linhas = historico.buscar(db, args.produto, desde, args.limite)
+        for mercado, dia, produto, preco, tipo in linhas:
+            rotulo = f" ({tipo})" if tipo else ""
+            print(f"{dia}  {mercado:<9}  R$ {preco:>8.2f}{rotulo}  {produto}")
+        print(f"{len(linhas)} linha(s) para '{args.produto}' desde {desde:%d/%m/%Y}")
+        return 0 if linhas else 1
+    if args.quedas:
+        lista = historico.quedas(db, desde, args.limite)
+        for queda in lista:
+            print(
+                f"{queda.variacao * 100:>6.1f}%  {queda.mercado:<9}  "
+                f"R$ {queda.preco_antes:>8.2f} -> R$ {queda.preco_agora:>8.2f}  "
+                f"({queda.dia_antes} a {queda.dia_agora})  {queda.produto}"
+            )
+        print(f"{len(lista)} variacao(oes) nos ultimos {args.dias} dia(s)")
+        return 0 if lista else 1
+
+    dados = historico.resumo(db)
+    periodo = f"{dados['de']} a {dados['ate']}" if dados["dias"] else "sem dias"
+    print(
+        f"{dados['precos']} precos em {dados['dias']} dia(s) ({periodo}), "
+        f"{dados['coletas']} coletas e {dados['site']} produtos do site -> {db}"
+    )
     return 0
 
 
@@ -769,6 +851,34 @@ def config_ler_precos(config: dict) -> bool:
 def config_enviar_precos(config: dict) -> bool:
     """Se os CSVs de precos vao junto dos PDFs (chave `enviar` de `[precos]`)."""
     return bool((config.get("precos") or {}).get("enviar", True))
+
+
+def db_historico(config: dict, data_dir: Path, config_path: Path) -> Path:
+    """Banco do historico: `[historico] db` (relativo ao config) ou `data/historico.sqlite`."""
+    caminho = (config.get("historico") or {}).get("db")
+    if caminho:
+        alvo = Path(str(caminho))
+        return alvo if alvo.is_absolute() else config_path.parent / alvo
+    return data_dir / "historico.sqlite"
+
+
+def config_quedas_resumo(config: dict) -> int:
+    """Quantas quedas de preco entram no resumo do run (`[historico] quedas_no_resumo`; 0 = off)."""
+    try:
+        return int((config.get("historico") or {}).get("quedas_no_resumo", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _quedas_texto(quedas: list[historico.Queda]) -> str:
+    """Bloco de quedas anexado ao resumo do Telegram (menor preco do item por dia)."""
+    linhas = ["", "Quedas recentes (menor preco do item por dia):"]
+    for queda in quedas:
+        linhas.append(
+            f"{queda.variacao * 100:+.0f}% {queda.mercado}: {queda.produto} "
+            f"R$ {queda.preco_antes:.2f} ({_dia_curto(queda.dia_antes)}) -> R$ {queda.preco_agora:.2f}"
+        )
+    return "\n".join(linhas)
 
 
 def select_markets(config: dict, only: str | None) -> list[str] | None:
