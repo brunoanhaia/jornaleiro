@@ -3,19 +3,23 @@
 Subcomandos:
     jornais run            coleta, compila um PDF por mercado e envia pelo Telegram
     jornais precos         le os precos dos PDFs ja baixados em data/<dia>/
+    jornais site-precos    le o catalogo do site do Examine (GraphQL)
     jornais render <url>   imprime o texto renderizado (debug do renderizador)
     jornais examine-probe  mostra a cadeia de descoberta do encarte do Examine
+    jornais limpar         remove coletas antigas de data/ (retencao)
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
+import shutil
 import sys
 import tomllib
 from dataclasses import asdict, dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -54,6 +58,57 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
 
+class _Espelho(io.TextIOBase):
+    """Escreve no destino original (terminal) e no arquivo de log ao mesmo tempo."""
+
+    def __init__(self, destino: io.TextIOBase, arquivo: io.TextIOBase) -> None:
+        self._destino = destino
+        self._arquivo = arquivo
+
+    def write(self, texto: str) -> int:
+        self._destino.write(texto)
+        self._arquivo.write(texto)
+        return len(texto)
+
+    def flush(self) -> None:
+        self._destino.flush()
+        self._arquivo.flush()
+
+    @property
+    def encoding(self) -> str:
+        return getattr(self._destino, "encoding", "utf-8")
+
+    def isatty(self) -> bool:
+        return False
+
+
+class _Transcricao:
+    """Espelha stdout/stderr em `data/<dia>/run.log` durante a execucao."""
+
+    def __init__(self, caminho: Path) -> None:
+        self.caminho = caminho
+        self._arquivo: io.TextIOBase | None = None
+        self._originais: tuple[io.TextIOBase, io.TextIOBase] | None = None
+
+    def __enter__(self) -> _Transcricao:
+        self.caminho.parent.mkdir(parents=True, exist_ok=True)
+        self._arquivo = self.caminho.open("a", encoding="utf-8")
+        self._arquivo.write(f"\n==== execucao em {datetime.now(SP):%d/%m/%Y %H:%M:%S} ====\n")
+        self._originais = (sys.stdout, sys.stderr)
+        sys.stdout = _Espelho(sys.stdout, self._arquivo)
+        sys.stderr = _Espelho(sys.stderr, self._arquivo)
+        return self
+
+    def __exit__(self, *_erro: object) -> None:
+        if self._originais is not None:
+            sys.stdout, sys.stderr = self._originais
+            self._originais = None
+        if self._arquivo is not None:
+            self._arquivo.flush()
+            self._arquivo.close()
+            self._arquivo = None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jornais", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -66,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--sem-ocr", action="store_true", help="nao roda OCR nos encartes em imagem")
     run.add_argument("--sem-precos", action="store_true", help="nao le nem envia precos (so os jornais)")
     run.add_argument("--data-dir")
-    run.add_argument("--config", default=DEFAULT_CONFIG)
+    run.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
     run.set_defaults(handler=cmd_run)
 
     precos_cmd = sub.add_parser("precos", help="le os precos dos PDFs ja baixados")
@@ -75,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     precos_cmd.add_argument("--sem-ocr", action="store_true", help="nao roda OCR nos encartes em imagem")
     precos_cmd.add_argument("--data-dir")
     precos_cmd.add_argument("--json", action="store_true", help="imprime os precos no stdout")
-    precos_cmd.add_argument("--config", default=DEFAULT_CONFIG)
+    precos_cmd.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
     precos_cmd.set_defaults(handler=cmd_precos)
 
     catalogo = sub.add_parser("site-precos", help="le os precos do site do Examine (GraphQL)")
@@ -83,27 +138,35 @@ def build_parser() -> argparse.ArgumentParser:
     catalogo.add_argument("--max-categorias", type=int, help="limita quantas categorias varrer")
     catalogo.add_argument("--data-dir")
     catalogo.add_argument("--json", action="store_true", help="imprime os produtos no stdout")
-    catalogo.add_argument("--config", default=DEFAULT_CONFIG)
+    catalogo.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
     catalogo.set_defaults(handler=cmd_site_precos)
 
     show = sub.add_parser("render", help="imprime o texto renderizado de uma URL")
     show.add_argument("url")
     show.add_argument("--renderer", choices=render.MODES)
-    show.add_argument("--config", default=DEFAULT_CONFIG)
+    show.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
     show.set_defaults(handler=cmd_render)
 
     probe = sub.add_parser("examine-probe", help="debug da descoberta do post do Examine")
     probe.add_argument("--renderer", choices=render.MODES)
-    probe.add_argument("--config", default=DEFAULT_CONFIG)
+    probe.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
     probe.set_defaults(handler=cmd_examine_probe)
+
+    limpar = sub.add_parser("limpar", help="remove coletas antigas de data/ (retencao)")
+    limpar.add_argument("--dias", type=int, default=30, help="manter as coletas dos ultimos N dias (padrao: 30)")
+    limpar.add_argument("--dry-run", action="store_true", help="apenas mostra o que seria removido")
+    limpar.add_argument("--data-dir")
+    limpar.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    limpar.set_defaults(handler=cmd_limpar)
 
     return parser
 
 
 def cmd_run(args: argparse.Namespace) -> int:
     load_dotenv()
-    config = load_config(Path(args.config))
-    data_dir = Path(args.data_dir or config["data_dir"])
+    config_path = localizar_config(args.config)
+    config = load_config(config_path)
+    data_dir = resolver_data_dir(args, config, config_path)
 
     keys = select_markets(config, args.only)
     if keys is None:
@@ -119,62 +182,66 @@ def cmd_run(args: argparse.Namespace) -> int:
     compressao = None if args.sem_comprimir else config_compressao(config)
     ocr = None if (args.sem_ocr or not lendo_precos) else config_ocr(config)
     today = datetime.now(SP).date()
-    renderer = render.build_renderer(args.renderer or config["renderer"])
-    state = State.load(data_dir / "state.json")
-    ctx = Context(renderer=renderer, today_sp=today, state=state)
 
-    rows: list[Row] = []
-    try:
-        for key in keys:
-            result = safe_fetch(REGISTRY[key], ctx, config["markets"][key])
-            cfg = config["markets"][key]
-            # o Examine tem preco estruturado no site: nao gasta OCR no encarte em imagem
-            ocr_mercado = None if (key == "examine" and cfg.get("precos_site", False)) else ocr
-            try:
-                row = publish(
-                    result,
-                    data_dir,
-                    today,
-                    compressao=compressao,
-                    ocr=ocr_mercado,
-                    ler_precos=lendo_precos,
-                )
-            except Exception as exc:  # noqa: BLE001 - um mercado nao aborta os demais
-                result.status = "failed"
-                result.error = result.error or describe_error(exc)
-                row = Row(result=result)
-            if lendo_precos and key == "examine" and cfg.get("precos_site", False):
+    # tudo o que sai no terminal tambem fica em data/<dia>/run.log
+    with _Transcricao(data_dir / today.isoformat() / "run.log"):
+        renderer = render.build_renderer(args.renderer or config["renderer"])
+        state = State.load(data_dir / "state.json")
+        ctx = Context(renderer=renderer, today_sp=today, state=state)
+
+        rows: list[Row] = []
+        try:
+            for key in keys:
+                result = safe_fetch(REGISTRY[key], ctx, config["markets"][key])
+                cfg = config["markets"][key]
+                # o Examine tem preco estruturado no site: nao gasta OCR no encarte em imagem
+                ocr_mercado = None if (key == "examine" and cfg.get("precos_site", False)) else ocr
                 try:
-                    ler_precos_site(row, cfg, data_dir, today)
-                except Exception as exc:  # noqa: BLE001 - o PDF do jornal ainda vai
-                    row.erro_precos = describe_error(exc)
-                    print(f"[examine] catalogo do site falhou: {row.erro_precos}", file=sys.stderr)
-            rows.append(row)
-            print(f"{key}: {describe(row)}", file=sys.stdout if row.path else sys.stderr)
-    finally:
-        renderer.close()
-        http.close()
+                    row = publish(
+                        result,
+                        data_dir,
+                        today,
+                        compressao=compressao,
+                        ocr=ocr_mercado,
+                        ler_precos=lendo_precos,
+                    )
+                except Exception as exc:  # noqa: BLE001 - um mercado nao aborta os demais
+                    result.status = "failed"
+                    result.error = result.error or describe_error(exc)
+                    row = Row(result=result)
+                if lendo_precos and key == "examine" and cfg.get("precos_site", False):
+                    try:
+                        ler_precos_site(row, cfg, data_dir, today)
+                    except Exception as exc:  # noqa: BLE001 - o PDF do jornal ainda vai
+                        row.erro_precos = describe_error(exc)
+                        print(f"[examine] catalogo do site falhou: {row.erro_precos}", file=sys.stderr)
+                rows.append(row)
+                print(f"{key}: {describe(row)}", file=sys.stdout if row.path else sys.stderr)
+        finally:
+            renderer.close()
+            http.close()
 
-    state.save()
+        state.save()
 
-    message = summary_message(today, rows)
-    print(message)
+        message = summary_message(today, rows)
+        print(message)
 
-    if not args.no_send:
-        telegram = notify.Telegram(token, chat_id)
-        telegram.send_message(message)
-        notify.send_report(
-            telegram,
-            documentos(rows, enviar_precos=lendo_precos and config_enviar_precos(config)),
-        )
-    return exit_code(rows)
+        if not args.no_send:
+            telegram = notify.Telegram(token, chat_id)
+            telegram.send_message(message)
+            notify.send_report(
+                telegram,
+                documentos(rows, enviar_precos=lendo_precos and config_enviar_precos(config)),
+            )
+        return exit_code(rows)
 
 
 def cmd_precos(args: argparse.Namespace) -> int:
     """Le os precos dos PDFs que ja estao em data/<dia>/ (sem baixar nada)."""
     load_dotenv()
-    config = load_config(Path(args.config))
-    data_dir = Path(args.data_dir or config["data_dir"])
+    config_path = localizar_config(args.config)
+    config = load_config(config_path)
+    data_dir = resolver_data_dir(args, config, config_path)
     keys = select_markets(config, args.only)
     if keys is None:
         return 2
@@ -200,7 +267,7 @@ def cmd_precos(args: argparse.Namespace) -> int:
         total += len(leitura.precos)
         print(
             f"{key}: {len(leitura.precos)} precos ({leitura.itens} itens)"
-            f"{' (OCR)' if leitura.fonte == 'ocr' else ''} -> {csv_path}"
+            f"{_rotulo_fonte(leitura.fonte)} -> {csv_path}"
         )
         if args.json:
             for preco in leitura.precos:
@@ -233,8 +300,9 @@ def site_do_config(cfg: MarketCfg) -> site.Site:
 def cmd_site_precos(args: argparse.Namespace) -> int:
     """Le os precos do catalogo do site do Examine (GraphQL), sem OCR."""
     load_dotenv()
-    config = load_config(Path(args.config))
-    data_dir = Path(args.data_dir or config["data_dir"])
+    config_path = localizar_config(args.config)
+    config = load_config(config_path)
+    data_dir = resolver_data_dir(args, config, config_path)
     cfg = config["markets"]["examine"]
     dia = date.fromisoformat(args.dia) if args.dia else datetime.now(SP).date()
     max_categorias = args.max_categorias if args.max_categorias is not None else int(
@@ -273,10 +341,11 @@ def cmd_examine_probe(args: argparse.Namespace) -> int:
     from PIL import Image
 
     load_dotenv()
-    config = load_config(Path(args.config))
+    config_path = localizar_config(args.config)
+    config = load_config(config_path)
     cfg = config["markets"]["examine"]
     renderer = render.build_renderer(args.renderer or config["renderer"])
-    state = State.load(Path(config["data_dir"]) / "state.json")
+    state = State.load(resolver_data_dir(args, config, config_path) / "state.json")
     ctx = Context(renderer=renderer, today_sp=datetime.now(SP).date(), state=state)
 
     try:
@@ -320,6 +389,45 @@ def cmd_examine_probe(args: argparse.Namespace) -> int:
         renderer.close()
         http.close()
     return 0
+
+
+def cmd_limpar(args: argparse.Namespace) -> int:
+    """Remove coletas antigas de `data/`, mantendo as dos ultimos `--dias`."""
+    load_dotenv()
+    config_path = localizar_config(args.config)
+    config = load_config(config_path)
+    data_dir = resolver_data_dir(args, config, config_path)
+    if args.dias < 0:
+        print("--dias precisa ser >= 0", file=sys.stderr)
+        return 2
+
+    limite = datetime.now(SP).date() - timedelta(days=args.dias)
+    alvos: list[tuple[Path, int]] = []
+    if data_dir.is_dir():
+        for pasta in sorted(data_dir.iterdir()):
+            if not pasta.is_dir():
+                continue
+            try:
+                dia = date.fromisoformat(pasta.name)
+            except ValueError:
+                continue  # pasta que nao e de coleta (ex.: raw/ de algo solto)
+            if dia < limite:
+                alvos.append((pasta, _tamanho(pasta)))
+
+    total = sum(tamanho for _, tamanho in alvos)
+    for pasta, tamanho in alvos:
+        if args.dry_run:
+            print(f"seria removida: {pasta} ({tamanho / 1048576:.1f} MB)")
+        else:
+            shutil.rmtree(pasta)
+            print(f"removida: {pasta} ({tamanho / 1048576:.1f} MB)")
+    acao = "seriam removidas" if args.dry_run else "removidas"
+    print(f"{acao} {len(alvos)} coleta(s), {total / 1048576:.1f} MB (retendo {args.dias} dia(s))")
+    return 0
+
+
+def _tamanho(pasta: Path) -> int:
+    return sum(arquivo.stat().st_size for arquivo in pasta.rglob("*") if arquivo.is_file())
 
 
 def publish(
@@ -471,6 +579,28 @@ def exit_code(rows: list[Row]) -> int:
     if all(row.result.status == "failed" for row in rows):
         return 1
     return 0
+
+
+def localizar_config(explicito: str | None) -> Path:
+    """Acha o config.toml: `--config` > `JORNAIS_CONFIG` > pasta atual > raiz do repo."""
+    if explicito:
+        return Path(explicito)
+    do_env = os.environ.get("JORNAIS_CONFIG", "").strip()
+    if do_env:
+        return Path(do_env)
+    aqui = Path(DEFAULT_CONFIG)
+    raiz = Path(__file__).resolve().parents[2]  # src/jornais/cli.py -> raiz do repositorio
+    if not aqui.exists() and (raiz / DEFAULT_CONFIG).exists():
+        return raiz / DEFAULT_CONFIG
+    return aqui
+
+
+def resolver_data_dir(args: argparse.Namespace, config: dict, config_path: Path) -> Path:
+    """`--data-dir` vence; caminho relativo do config.toml fica ao lado dele."""
+    data_dir = Path(getattr(args, "data_dir", None) or config["data_dir"])
+    if not data_dir.is_absolute():
+        data_dir = config_path.parent / data_dir
+    return data_dir
 
 
 def load_config(path: Path) -> dict:
