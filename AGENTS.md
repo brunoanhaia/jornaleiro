@@ -40,10 +40,13 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
   Telegram). O `data/state.json` do CI vive no branch `estado` (restaurado e commitado
   pelo próprio workflow) e os secrets no environment `producao` (criado no primeiro run;
   restringir as deployment branches à `main` exige admin).
-- CI: o `main` só aceita PR (squash, histórico linear) com resultado do CodeQL e com a
-  cobertura enviada; quem alimenta as regras são `.github/workflows/codeql.yml`
-  (PR/push/semanal) e `.github/workflows/testes.yml` (pytest + `upload-code-coverage`,
-  PR/push).
+- CI: o `main` só aceita PR (squash, histórico linear) com resultado do CodeQL
+  (`.github/workflows/codeql.yml`, PR/push/semanal); `.github/workflows/testes.yml` roda o
+  pytest em PR/push. A ruleset "protect default branch" tem a regra *Restrict updates*
+  com bypass vazio (quem não é admin recebe `current_user_can_bypass: never`): ela
+  bloqueia até o merge de PR (`Cannot update this protected ref`) — mergear na `main`
+  exige admin do repositório. A regra de cobertura da mesma ruleset fica inerte sem o
+  GitHub Code Quality (pago; enquanto isso o upload de Cobertura XML responde 404).
 
 ## Arquitetura
 
