@@ -2,6 +2,8 @@
 name = "jornaleiro"
 version = "0.1.0"
 description = "Jornaleiro: coleta os encartes de ofertas dos mercados de Rio Claro/SP e envia por Telegram"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "httpx",
@@ -21,7 +23,7 @@ dev = ["pytest"]
 jornaleiro = "jornaleiro.cli:main"
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]

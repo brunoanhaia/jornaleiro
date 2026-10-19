@@ -378,3 +378,7 @@ Estratégias conhecidas e ainda **não** implementadas: no Assaí, pré-processa
 posição; no Atacadão, ler os rótulos (`PREÇO VAREJO/ATACADO`, `No app`, `Cartão`) para o
 `tipo` deixar de ser heurística de valor. As duas dependem de medir o ganho antes de
 mexer no parser atual.
+
+## Licença
+
+MIT — o texto completo está em [`LICENSE`](LICENSE).
