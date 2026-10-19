@@ -31,6 +31,8 @@ jobs:
     steps:
       - name: Baixar o repositorio
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Iniciar o CodeQL
         uses: github/codeql-action/init@v4

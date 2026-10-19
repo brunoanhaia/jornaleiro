@@ -44,6 +44,8 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Conferir os segredos
+        # run --no-send nao precisa de token/chat_id (serve para validar sem Telegram)
+        if: ${{ inputs.sem_envio != true }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -56,11 +58,23 @@ jobs:
       - name: Restaurar o estado do branch `estado`
         run: |
           mkdir -p data
-          if git fetch --quiet --depth=1 origin estado && git cat-file -e FETCH_HEAD:state.json 2>/dev/null; then
+          if ! git fetch --quiet --depth=1 origin estado; then
+            # fetch falhou: so segue sem estado se o branch realmente nao existe;
+            # falha transitoria aborta o run para nao reenviar encartes
+            CODIGO=0
+            git ls-remote --exit-code --heads origin estado >/dev/null 2>&1 || CODIGO=$?
+            if [ "$CODIGO" -ne 2 ]; then
+              echo "::error::nao consegui restaurar o estado do branch estado (codigo $CODIGO)"
+              exit 1
+            fi
+            echo "branch estado ainda nao existe; seguindo sem estado anterior"
+            exit 0
+          fi
+          if git cat-file -e FETCH_HEAD:state.json 2>/dev/null; then
             git show FETCH_HEAD:state.json > data/state.json
             echo "estado restaurado do branch estado"
           else
-            echo "sem estado anterior no branch estado"
+            echo "branch estado sem state.json; seguindo sem estado anterior"
           fi
 
       - name: Coletar e enviar

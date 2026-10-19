@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Baixar o repositorio
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Preparar o Python
         uses: actions/setup-python@v7
