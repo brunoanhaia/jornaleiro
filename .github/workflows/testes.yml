@@ -1,0 +1,48 @@
+# A ruleset do branch main exige cobertura (regra "Restrict code coverage"); este
+# workflow roda os testes no CI e sobe o Cobertura XML com o action oficial do GitHub.
+name: Testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  code-quality: write
+
+jobs:
+  cobertura:
+    name: pytest + cobertura
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # head do PR (nao o merge) para as linhas casarem com o diff
+      - name: Baixar o repositorio
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Preparar o Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar o pacote e o pytest-cov
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pip install pytest-cov
+
+      - name: Rodar os testes com cobertura
+        run: python -m pytest --cov=jornaleiro --cov-report=xml
+
+      - name: Subir o relatorio de cobertura
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: coverage.xml
+          language: Python
+          label: code-coverage/pytest

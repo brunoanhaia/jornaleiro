@@ -403,11 +403,12 @@ próximo pode reenviar o mesmo encarte (duplicata); nunca pula um encarte novo.
    (`/revoke` no BotFather e regeneração dos tokens) e atualize o `.env` local e o secret
    no GitHub.
 4. O `main` é protegido por ruleset (PR com squash e histórico linear, resultados do
-   CodeQL): por isso `.github/workflows/codeql.yml` faz parte do projeto — cada PR roda a
-   análise e o merge só libera quando ela termina sem alertas acima do limiar da ruleset
-   (erros e segurança alta ou superior). O `.github/workflows/` também é superfície de
-   ataque: quem consegue mudar o workflow consegue ler os secrets, então revise mudanças
-   nessa pasta.
+   CodeQL e cobertura de código): por isso `.github/workflows/codeql.yml` (análise) e
+   `.github/workflows/testes.yml` (pytest + upload do Cobertura XML) fazem parte do
+   projeto — cada PR roda os dois e o merge só libera com a análise sem alertas acima do
+   limiar da ruleset (erros e segurança alta ou superior) e com a cobertura enviada. O
+   `.github/workflows/` também é superfície de ataque: quem consegue mudar o workflow
+   consegue ler os secrets, então revise mudanças nessa pasta.
 
 O primeiro run usa o estado semeado na máquina local; se quiser forçar um reenvio dos
 encartes atuais, use *Run workflow* com `forcar: true`.

@@ -40,9 +40,10 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
   Telegram). O `data/state.json` do CI vive no branch `estado` (restaurado e commitado
   pelo próprio workflow) e os secrets no environment `producao` (criado no primeiro run;
   restringir as deployment branches à `main` exige admin).
-- CI: o `main` só aceita PR (squash, histórico linear) com resultado do CodeQL
-  (`.github/workflows/codeql.yml` roda em PR/push/semanal); análise pendente deixa o
-  merge em "Waiting for Code Scanning results".
+- CI: o `main` só aceita PR (squash, histórico linear) com resultado do CodeQL e com a
+  cobertura enviada; quem alimenta as regras são `.github/workflows/codeql.yml`
+  (PR/push/semanal) e `.github/workflows/testes.yml` (pytest + `upload-code-coverage`,
+  PR/push).
 
 ## Arquitetura
 
