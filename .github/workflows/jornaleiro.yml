@@ -1,0 +1,92 @@
+name: Jornaleiro
+
+on:
+  schedule:
+    # 08:00 em America/Sao_Paulo (o cron do Actions e UTC e pode atrasar alguns minutos)
+    - cron: "0 11 * * *"
+  workflow_dispatch:
+    inputs:
+      forcar:
+        description: "Reenviar mesmo com encarte identico ao ultimo envio"
+        type: boolean
+        default: false
+
+# minimo necessario: empurrar o branch `estado` com o GITHUB_TOKEN do proprio run
+permissions:
+  contents: write
+
+concurrency:
+  group: jornaleiro
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # secrets ficam presos a este environment (deployment branches: main)
+    environment: producao
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar o pacote e o Chromium
+        run: |
+          python -m pip install -e .
+          python -m playwright install --with-deps chromium
+
+      - name: Conferir os segredos
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "::error::configure TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID no environment 'producao'"
+            exit 1
+          fi
+
+      - name: Restaurar o estado do branch `estado`
+        run: |
+          mkdir -p data
+          if git fetch --quiet --depth=1 origin estado && git cat-file -e FETCH_HEAD:state.json 2>/dev/null; then
+            git show FETCH_HEAD:state.json > data/state.json
+            echo "estado restaurado do branch estado"
+          else
+            echo "sem estado anterior no branch estado"
+          fi
+
+      - name: Coletar e enviar
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EXAMINE_TOKEN: ${{ secrets.EXAMINE_TOKEN }}
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
+        run: |
+          if [ "${{ inputs.forcar }}" = "true" ]; then
+            jornaleiro run --forcar
+          else
+            jornaleiro run
+          fi
+
+      - name: Salvar o estado no branch `estado`
+        if: always()
+        run: |
+          if [ ! -f data/state.json ]; then
+            echo "sem state.json para salvar"
+            exit 0
+          fi
+          git fetch --quiet --depth=1 origin estado
+          git worktree add --quiet --detach /tmp/estado FETCH_HEAD
+          cp data/state.json /tmp/estado/state.json
+          git -C /tmp/estado add state.json
+          if git -C /tmp/estado diff --cached --quiet; then
+            echo "estado sem mudancas"
+            exit 0
+          fi
+          git -C /tmp/estado -c user.name="hiroai[bot]" -c user.email="github@bot.oi.dev.br" \
+            commit --quiet -m "estado: $(date -u +%F)"
+          git -C /tmp/estado push --quiet origin HEAD:estado

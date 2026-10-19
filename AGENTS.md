@@ -2,8 +2,10 @@
 
 CLI em Python >= 3.11 (argparse, sem framework) que coleta os encartes de 5 mercados de
 Rio Claro/SP, monta um PDF por mercado, lê os preços e envia PDFs + CSVs por Telegram.
-Execução manual; sem agendador, API ou front-end (o SQLite é um índice derivado dos CSVs,
-não uma fonte de verdade). Código, logs, legendas e testes são em pt-BR — mantenha o
+Execução manual local ou agendada no GitHub Actions (uma vez por dia); sem API ou
+front-end (o SQLite é um índice derivado dos CSVs, não uma fonte de verdade). Nenhum
+binário é versionado: PDFs, CSVs, banco e `run.log` ficam em `data/` (fora do git) —
+nada de LFS. Código, logs, legendas e testes são em pt-BR — mantenha o
 idioma. Os commits seguem *Conventional Commits*: `tipo(escopo): resumo` em pt-BR (tipos
 usados: `feat`, `fix`, `docs`, `test`, `chore`), com corpo curto explicando o porquê
 quando ajudar.
@@ -33,6 +35,10 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
   `--quedas` consultam). Rodar `run` no mesmo dia sobrescreve o PDF e limpa os brutos do
   mercado antes de regravar. Retenção: `jornaleiro limpar --dias 30 [--dry-run]` apaga
   coletas antigas.
+- CI: `.github/workflows/jornaleiro.yml` roda `jornaleiro run` diariamente (08:00 em
+  America/Sao_Paulo) e por `workflow_dispatch` (`forcar`). O `data/state.json` do CI vive
+  no branch `estado` (restaurado e commitado pelo próprio workflow) e os secrets no
+  environment `producao`.
 
 ## Arquitetura
 
@@ -52,6 +58,8 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
   `--config`/`--only`/`--renderer`/`--data-dir` ajustam por execução.
 - `run` não aborta por mercado: sai `0` mesmo com falha parcial, `1` se nenhum PDF sair ou
   todos falharem, `2` para erro de config.
+- `.github/workflows/jornaleiro.yml` — coleta diária (cron/dispatch), restauração/commit
+  do `state.json` no branch `estado`; sem artifacts nem binários versionados.
 
 ## Armadilhas
 
@@ -76,6 +84,12 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
 - `run` não reenvia encarte com o mesmo sha256 do último envio (`state.json` →
   `mercados.<chave>`), a menos que `--forcar`; avisos de frescor (encarte vencido, queda
   suspeita de preços) aparecem no resumo sem abortar nada.
+- O `data/state.json` do CI vive no branch `estado` (só JSON): rodar local e CI em paralelo
+  separa os estados e duplica envios — prefira o CI no dia a dia e use `--no-send`
+  localmente, ou sincronize (README, "Rodando também na máquina").
+- Segredos do CI: só no environment `producao` (deployment branch `main`); o workflow usa
+  apenas o `GITHUB_TOKEN` com `contents: write` (branch `estado`). `.env` e `data/` nunca
+  entram no git — sem LFS.
 - Examine sem `EXAMINE_TOKEN` cai no Instagram. A semente vem de `data/state.json`
   (`examine_last_post_url`/`examine_seen`): apague essas chaves para reavaliar posts antigos.
 - Chromium e tesseract podem faltar na máquina sem quebrar o run: o renderer `auto` cai para

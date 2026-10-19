@@ -4,7 +4,8 @@ Coleta os encartes ("jornais de ofertas") vigentes dos mercados **Assaí, Atacad
 Covabra, Savegnago e Examine** na cidade de Rio Claro/SP, compila **um PDF por
 mercado**, lê os preços publicados nos encartes (e no catálogo do site do Examine)
 e envia os PDFs e os CSVs por Telegram com uma mensagem-resumo. A execução é manual
-(`jornaleiro run`); não há agendador nem banco de dados como fonte de verdade.
+(`jornaleiro run`) ou agendada no GitHub Actions, uma vez por dia (ver *Coleta diária no
+GitHub Actions*); o SQLite é um índice derivado dos CSVs, não a fonte de verdade.
 
 ## Fontes
 
@@ -357,8 +358,66 @@ o dia, as contagens e o flag `enviado` — é o que o `run` usa para não reenvi
 encarte (ver "Uso"). A gravação é atômica (arquivo temporário + `os.replace`), então um
 `Ctrl-C` no meio não deixa o JSON pela metade.
 
+No CI, esse mesmo arquivo é restaurado e regravado no branch `estado` a cada run (o
+runner é efêmero); o `data/state.json` da máquina local é independente — veja *Coleta
+diária no GitHub Actions*.
+
 Para forçar o Examine a reavaliar posts antigos, apague as duas chaves (ou o
 `data/state.json`) antes de rodar.
+
+## Coleta diária no GitHub Actions
+
+`.github/workflows/jornaleiro.yml` roda `jornaleiro run` todo dia às 08:00 (horário de
+Brasília; o cron do Actions é UTC e pode atrasar alguns minutos) e também por
+`workflow_dispatch` — o botão *Run workflow* tem a opção `forcar` para reenviar mesmo com
+o encarte idêntico ao último envio. O run instala o pacote e o Chromium do Playwright
+(necessário para o Assaí) e não precisa de tesseract enquanto `[precos] ler = false`.
+
+O runner é efêmero: `data/` não sobrevive entre execuções. Por isso o `data/state.json`
+— a memória do "não reenviar o mesmo encarte" e a semente do Examine — fica no branch
+`estado`, restaurado antes do run e atualizado depois (um commit por dia; o primeiro
+estado veio da máquina local). Nenhum PDF vai para o git: os binários existem só no
+runner durante o job (o envio é pelo Telegram) e `data/` continua ignorado — o branch
+`estado` guarda apenas o JSON. Se um run morrer entre o envio e o commit do estado, o
+próximo pode reenviar o mesmo encarte (duplicata); nunca pula um encarte novo.
+
+### Configuração (uma vez)
+
+1. Settings → Environments → **New environment** `producao`; em *Deployment branches*,
+   selecione **Selected branches** e adicione `main` (só runs do `main` acessam os secrets).
+2. No environment (ou no repositório), crie os secrets:
+
+   | Secret | Uso | Obrigatório |
+   |---|---|---|
+   | `TELEGRAM_BOT_TOKEN` | envio dos PDFs | sim |
+   | `TELEGRAM_CHAT_ID` | destino no Telegram | sim |
+   | `EXAMINE_TOKEN` | jornal oficial do Examine (`pamphlets`) | não (cai no Instagram) |
+   | `JINA_API_KEY` | renderizador de reserva (sem Chromium) | não |
+
+3. O workflow só referencia `${{ secrets.* }}`; nada fica no repositório. O
+   `GITHUB_TOKEN` do run tem apenas `contents: write` (para o branch `estado`) e expira
+   ao fim do job — não há PAT nem chave SSH no CI. Se um valor vazar, rotacione
+   (`/revoke` no BotFather e regeneração dos tokens) e atualize o `.env` local e o secret
+   no GitHub.
+4. O `.github/workflows/` também é superfície de ataque: quem consegue mudar o workflow
+   consegue ler os secrets. Se o repositório ganhar colaboradores, proteja o `main`
+   (PR + review) e revise mudanças nessa pasta.
+
+O primeiro run usa o estado semeado na máquina local; se quiser forçar um reenvio dos
+encartes atuais, use *Run workflow* com `forcar: true`.
+
+### Rodando também na máquina
+
+O CI e a máquina mantêm estados separados. Para não duplicar envios, deixe o envio
+diário com o CI e use o local para depurar (`--no-send`, `--only`, `--forcar`). Para
+puxar o estado do CI antes de um run local:
+
+```bash
+git fetch origin estado && git show origin/estado:state.json > data/state.json
+```
+
+O caminho inverso (publicar o estado local no branch) é o que o workflow faz ao fim de
+cada run; evite fazer os dois em paralelo.
 
 ## Testes
 
