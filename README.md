@@ -369,9 +369,11 @@ Para forçar o Examine a reavaliar posts antigos, apague as duas chaves (ou o
 
 `.github/workflows/jornaleiro.yml` roda `jornaleiro run` todo dia às 08:00 (horário de
 Brasília; o cron do Actions é UTC e pode atrasar alguns minutos) e também por
-`workflow_dispatch` — o botão *Run workflow* tem a opção `forcar` para reenviar mesmo com
-o encarte idêntico ao último envio. O run instala o pacote e o Chromium do Playwright
-(necessário para o Assaí) e não precisa de tesseract enquanto `[precos] ler = false`.
+`workflow_dispatch` — o botão *Run workflow* tem as opções `forcar` (reenviar mesmo com
+o encarte idêntico ao último envio) e `sem_envio` (só coleta, sem publicar nada no
+Telegram: valida instalação e downloads sem incomodar o grupo). O run instala o pacote e
+o Chromium do Playwright (necessário para o Assaí) e não precisa de tesseract enquanto
+`[precos] ler = false`.
 
 O runner é efêmero: `data/` não sobrevive entre execuções. Por isso o `data/state.json`
 — a memória do "não reenviar o mesmo encarte" e a semente do Examine — fica no branch
@@ -383,9 +385,10 @@ próximo pode reenviar o mesmo encarte (duplicata); nunca pula um encarte novo.
 
 ### Configuração (uma vez)
 
-1. Settings → Environments → **New environment** `producao`; em *Deployment branches*,
-   selecione **Selected branches** e adicione `main` (só runs do `main` acessam os secrets).
-2. No environment (ou no repositório), crie os secrets:
+1. O environment `producao` é criado sozinho no primeiro run (o job o referencia). Com
+   admin no repositório, crie antes em Settings → Environments e restrinja *Deployment
+   branches* a `main` — sem isso o environment funciona, mas não limita quem pode usá-lo.
+2. No environment, crie os secrets:
 
    | Secret | Uso | Obrigatório |
    |---|---|---|
@@ -399,9 +402,12 @@ próximo pode reenviar o mesmo encarte (duplicata); nunca pula um encarte novo.
    ao fim do job — não há PAT nem chave SSH no CI. Se um valor vazar, rotacione
    (`/revoke` no BotFather e regeneração dos tokens) e atualize o `.env` local e o secret
    no GitHub.
-4. O `.github/workflows/` também é superfície de ataque: quem consegue mudar o workflow
-   consegue ler os secrets. Se o repositório ganhar colaboradores, proteja o `main`
-   (PR + review) e revise mudanças nessa pasta.
+4. O `main` é protegido por ruleset (PR com squash e histórico linear, resultados do
+   CodeQL): por isso `.github/workflows/codeql.yml` faz parte do projeto — cada PR roda a
+   análise e o merge só libera quando ela termina sem alertas acima do limiar da ruleset
+   (erros e segurança alta ou superior). O `.github/workflows/` também é superfície de
+   ataque: quem consegue mudar o workflow consegue ler os secrets, então revise mudanças
+   nessa pasta.
 
 O primeiro run usa o estado semeado na máquina local; se quiser forçar um reenvio dos
 encartes atuais, use *Run workflow* com `forcar: true`.

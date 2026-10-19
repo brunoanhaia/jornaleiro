@@ -36,9 +36,13 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
   mercado antes de regravar. Retenção: `jornaleiro limpar --dias 30 [--dry-run]` apaga
   coletas antigas.
 - CI: `.github/workflows/jornaleiro.yml` roda `jornaleiro run` diariamente (08:00 em
-  America/Sao_Paulo) e por `workflow_dispatch` (`forcar`). O `data/state.json` do CI vive
-  no branch `estado` (restaurado e commitado pelo próprio workflow) e os secrets no
-  environment `producao`.
+  America/Sao_Paulo) e por `workflow_dispatch` (`forcar` reenvia; `sem_envio` testa sem
+  Telegram). O `data/state.json` do CI vive no branch `estado` (restaurado e commitado
+  pelo próprio workflow) e os secrets no environment `producao` (criado no primeiro run;
+  restringir as deployment branches à `main` exige admin).
+- CI: o `main` só aceita PR (squash, histórico linear) com resultado do CodeQL
+  (`.github/workflows/codeql.yml` roda em PR/push/semanal); análise pendente deixa o
+  merge em "Waiting for Code Scanning results".
 
 ## Arquitetura
 
@@ -87,9 +91,9 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
 - O `data/state.json` do CI vive no branch `estado` (só JSON): rodar local e CI em paralelo
   separa os estados e duplica envios — prefira o CI no dia a dia e use `--no-send`
   localmente, ou sincronize (README, "Rodando também na máquina").
-- Segredos do CI: só no environment `producao` (deployment branch `main`); o workflow usa
-  apenas o `GITHUB_TOKEN` com `contents: write` (branch `estado`). `.env` e `data/` nunca
-  entram no git — sem LFS.
+- Segredos do CI: só no environment `producao` (a restrição de deployment branch à `main`
+  exige admin e pode não estar aplicada); o workflow usa apenas o `GITHUB_TOKEN` com
+  `contents: write` (branch `estado`). `.env` e `data/` nunca entram no git — sem LFS.
 - Examine sem `EXAMINE_TOKEN` cai no Instagram. A semente vem de `data/state.json`
   (`examine_last_post_url`/`examine_seen`): apague essas chaves para reavaliar posts antigos.
 - Chromium e tesseract podem faltar na máquina sem quebrar o run: o renderer `auto` cai para
