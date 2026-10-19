@@ -1,13 +1,13 @@
 """CLI: coleta, compila, envia e le os precos dos encartes de Rio Claro/SP.
 
 Subcomandos:
-    jornais run            coleta, compila um PDF por mercado e envia pelo Telegram
-    jornais precos         le os precos dos PDFs ja baixados em data/<dia>/
-    jornais site-precos    le o catalogo do site do Examine (GraphQL)
-    jornais render <url>   imprime o texto renderizado (debug do renderizador)
-    jornais examine-probe  mostra a cadeia de descoberta do encarte do Examine
-    jornais historico      consulta o historico de precos (SQLite derivado dos CSVs)
-    jornais limpar         remove coletas antigas de data/ (retencao)
+    jornaleiro run            coleta, compila um PDF por mercado e envia pelo Telegram
+    jornaleiro precos         le os precos dos PDFs ja baixados em data/<dia>/
+    jornaleiro site-precos    le o catalogo do site do Examine (GraphQL)
+    jornaleiro render <url>   imprime o texto renderizado (debug do renderizador)
+    jornaleiro examine-probe  mostra a cadeia de descoberta do encarte do Examine
+    jornaleiro historico      consulta o historico de precos (SQLite derivado dos CSVs)
+    jornaleiro limpar         remove coletas antigas de data/ (retencao)
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ class _Transcricao:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="jornais", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="jornaleiro", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     run = sub.add_parser("run", help="coleta, compila e envia os encartes")
@@ -129,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--sem-precos", action="store_true", help="nao le nem envia precos (so os jornais)")
     run.add_argument("--forcar", action="store_true", help="reenvia mesmo com o encarte identico ao ultimo envio")
     run.add_argument("--data-dir")
-    run.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    run.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNALEIRO_CONFIG)")
     run.set_defaults(handler=cmd_run)
 
     precos_cmd = sub.add_parser("precos", help="le os precos dos PDFs ja baixados")
@@ -138,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
     precos_cmd.add_argument("--sem-ocr", action="store_true", help="nao roda OCR nos encartes em imagem")
     precos_cmd.add_argument("--data-dir")
     precos_cmd.add_argument("--json", action="store_true", help="imprime os precos no stdout")
-    precos_cmd.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    precos_cmd.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNALEIRO_CONFIG)")
     precos_cmd.set_defaults(handler=cmd_precos)
 
     catalogo = sub.add_parser("site-precos", help="le os precos do site do Examine (GraphQL)")
@@ -146,25 +146,25 @@ def build_parser() -> argparse.ArgumentParser:
     catalogo.add_argument("--max-categorias", type=int, help="limita quantas categorias varrer")
     catalogo.add_argument("--data-dir")
     catalogo.add_argument("--json", action="store_true", help="imprime os produtos no stdout")
-    catalogo.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    catalogo.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNALEIRO_CONFIG)")
     catalogo.set_defaults(handler=cmd_site_precos)
 
     show = sub.add_parser("render", help="imprime o texto renderizado de uma URL")
     show.add_argument("url")
     show.add_argument("--renderer", choices=render.MODES)
-    show.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    show.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNALEIRO_CONFIG)")
     show.set_defaults(handler=cmd_render)
 
     probe = sub.add_parser("examine-probe", help="debug da descoberta do post do Examine")
     probe.add_argument("--renderer", choices=render.MODES)
-    probe.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    probe.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNALEIRO_CONFIG)")
     probe.set_defaults(handler=cmd_examine_probe)
 
     limpar = sub.add_parser("limpar", help="remove coletas antigas de data/ (retencao)")
     limpar.add_argument("--dias", type=int, default=30, help="manter as coletas dos ultimos N dias (padrao: 30)")
     limpar.add_argument("--dry-run", action="store_true", help="apenas mostra o que seria removido")
     limpar.add_argument("--data-dir")
-    limpar.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    limpar.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNALEIRO_CONFIG)")
     limpar.set_defaults(handler=cmd_limpar)
 
     hist = sub.add_parser("historico", help="consulta o historico de precos (SQLite em data/)")
@@ -175,7 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     hist.add_argument("--limite", type=int, default=20, help="maximo de linhas (padrao: 20)")
     hist.add_argument("--db", help="caminho do banco (padrao: data/historico.sqlite)")
     hist.add_argument("--data-dir")
-    hist.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNAIS_CONFIG)")
+    hist.add_argument("--config", help="config.toml (padrao: ./config.toml ou $JORNALEIRO_CONFIG)")
     hist.set_defaults(handler=cmd_historico)
 
     return parser
@@ -303,7 +303,7 @@ def cmd_precos(args: argparse.Namespace) -> int:
     for key in keys:
         pdf = data_dir / dia.isoformat() / f"{key}.pdf"
         if not pdf.exists():
-            print(f"{key}: sem PDF em {pdf} (rode `jornais run`)", file=sys.stderr)
+            print(f"{key}: sem PDF em {pdf} (rode `jornaleiro run`)", file=sys.stderr)
             continue
         brutos = precos.arquivos_brutos(data_dir, dia, key)
         if brutos:
@@ -792,14 +792,14 @@ def _falhou_no_envio(row: Row, falhas: list[str]) -> bool:
 
 
 def localizar_config(explicito: str | None) -> Path:
-    """Acha o config.toml: `--config` > `JORNAIS_CONFIG` > pasta atual > raiz do repo."""
+    """Acha o config.toml: `--config` > `JORNALEIRO_CONFIG` > pasta atual > raiz do repo."""
     if explicito:
         return Path(explicito)
-    do_env = os.environ.get("JORNAIS_CONFIG", "").strip()
+    do_env = os.environ.get("JORNALEIRO_CONFIG", "").strip()
     if do_env:
         return Path(do_env)
     aqui = Path(DEFAULT_CONFIG)
-    raiz = Path(__file__).resolve().parents[2]  # src/jornais/cli.py -> raiz do repositorio
+    raiz = Path(__file__).resolve().parents[2]  # src/jornaleiro/cli.py -> raiz do repositorio
     if not aqui.exists() and (raiz / DEFAULT_CONFIG).exists():
         return raiz / DEFAULT_CONFIG
     return aqui

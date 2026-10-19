@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from jornais import state
-from jornais.state import State
+from jornaleiro import state
+from jornaleiro.state import State
 
 
 def test_load_de_arquivo_ausente_ou_invalido_devolve_estado_vazio(tmp_path: Path) -> None:

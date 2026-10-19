@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from jornais import http
+from jornaleiro import http
 
 URL = "https://exemplo.test/pagina"
 

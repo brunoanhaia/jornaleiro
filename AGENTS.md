@@ -20,27 +20,27 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
 - Os testes não acessam a rede (fixtures inline recortadas de respostas reais, renderer
   falso, `monkeypatch` de `http`); escreva testes novos no mesmo estilo.
 - Não há lint, formatador nem typecheck configurados; o pytest é a única verificação.
-- Iterar na extração de preços sem rede: `.venv/bin/jornais precos --dia AAAA-MM-DD`
+- Iterar na extração de preços sem rede: `.venv/bin/jornaleiro precos --dia AAAA-MM-DD`
   reprocessa os PDFs já baixados em `data/<dia>/`.
-- Debug: `.venv/bin/jornais render <url>` imprime o texto renderizado;
-  `.venv/bin/jornais examine-probe` mostra a descoberta do post do Instagram.
+- Debug: `.venv/bin/jornaleiro render <url>` imprime o texto renderizado;
+  `.venv/bin/jornaleiro examine-probe` mostra a descoberta do post do Instagram.
 - Todo comando chama `load_dotenv()`: `.env` (não versionado) com `TELEGRAM_BOT_TOKEN` e
   `TELEGRAM_CHAT_ID` para enviar — sem eles use `--no-send`; `JINA_API_KEY` e
   `EXAMINE_TOKEN` são opcionais.
 - `data/` guarda `data/<AAAA-MM-DD>/<mercado>.pdf`, `raw/` (originais), `precos/*.csv|json`,
   `run.log` (espelho do terminal de cada execução), `state.json` e `historico.sqlite`
-  (índice dos CSVs, descartável: `jornais historico --reindex` reconstrói, `--produto`/
+  (índice dos CSVs, descartável: `jornaleiro historico --reindex` reconstrói, `--produto`/
   `--quedas` consultam). Rodar `run` no mesmo dia sobrescreve o PDF e limpa os brutos do
-  mercado antes de regravar. Retenção: `jornais limpar --dias 30 [--dry-run]` apaga
+  mercado antes de regravar. Retenção: `jornaleiro limpar --dias 30 [--dry-run]` apaga
   coletas antigas.
 
 ## Arquitetura
 
-- `src/jornais/cli.py` — entrypoint `jornais`
+- `src/jornaleiro/cli.py` — entrypoint `jornaleiro`
   (`run|precos|site-precos|render|examine-probe|historico|limpar`), orquestração
   (`cmd_run` → `publish`), frescor/anti-duplicidade dos envios (sha em `state.json`) e
   resumo/captions do Telegram.
-- `src/jornais/markets/<chave>.py` — um módulo por mercado com `KEY`, `LABEL` e
+- `src/jornaleiro/markets/<chave>.py` — um módulo por mercado com `KEY`, `LABEL` e
   `fetch(ctx, cfg) -> MarketResult`, registrados em `markets/__init__.py`
   (`REGISTRY`/`ORDER`). `safe_fetch` impede que um mercado derrube os outros. Mercado novo =
   módulo + registro + seção `[markets.<chave>]` no `config.toml`.
@@ -69,7 +69,7 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
 - Atacadão: preços e nomes são lidos **por coordenadas** (`precos._MERCADOS_COLUNAS`).
   O corte entre dois cards empilhados não é um vão fixo — o bloco de nome do card decide
   (vãos de ~30–64 px aparecem dentro do card e na fronteira). Mexeu na segmentação? Rode
-  `jornais precos --dia <dia> --only atacadao` num dia com brutos em `data/` e confira os
+  `jornaleiro precos --dia <dia> --only atacadao` num dia com brutos em `data/` e confira os
   cards de 3 preços e os `produto` vazios; os testes sintéticos são em `tests/test_precos.py`.
 - O banco `data/historico.sqlite` é derivado dos CSVs: nunca commitar (fica em `data/`,
   fora do git) e o `run` só o atualiza quando ele já existe; `--reindex` reconstrói tudo.

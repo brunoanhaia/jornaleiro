@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from jornais.cli import Row, config_ler_precos, describe, summary_message
-from jornais.model import MarketResult
+from jornaleiro.cli import Row, config_ler_precos, describe, summary_message
+from jornaleiro.model import MarketResult
 
 DIA = date(2026, 10, 15)
 
@@ -65,7 +65,7 @@ def test_resumo_marca_mercado_que_falhou() -> None:
 
 
 def test_documentos_levam_pdf_e_csv_de_precos() -> None:
-    from jornais.cli import documentos
+    from jornaleiro.cli import documentos
 
     rows = [
         row("atacadao", "Atacadão", count=6, unit="folhetos", validity="12/10 a 19/10",
@@ -115,7 +115,7 @@ def test_resumo_sem_leitura_de_precos_mostra_so_a_validade() -> None:
 
 
 def test_rotulo_fonte_marca_ocr_e_fontes_mistas() -> None:
-    from jornais.cli import _rotulo_fonte
+    from jornaleiro.cli import _rotulo_fonte
 
     assert _rotulo_fonte("texto") == ""
     assert _rotulo_fonte("nenhuma") == ""

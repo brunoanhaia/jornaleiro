@@ -8,8 +8,8 @@ from io import BytesIO
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
-from jornais import compose
-from jornais.model import Asset, MarketResult
+from jornaleiro import compose
+from jornaleiro.model import Asset, MarketResult
 
 A4 = (595, 842)
 DIA = date(2026, 10, 15)

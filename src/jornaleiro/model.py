@@ -50,9 +50,9 @@ class MarketCfg(dict):
 class Context:
     """Estado compartilhado de uma execucao."""
 
-    renderer: Any  # jornais.render.Renderer
+    renderer: Any  # jornaleiro.render.Renderer
     today_sp: date
-    state: Any  # jornais.state.State
+    state: Any  # jornaleiro.state.State
 
 
 def describe_error(exc: BaseException) -> str:

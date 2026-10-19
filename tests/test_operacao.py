@@ -9,8 +9,8 @@ from pathlib import Path
 
 from pypdf import PdfWriter
 
-from jornais import cli, notify, render
-from jornais.model import SP, Asset, MarketResult
+from jornaleiro import cli, notify, render
+from jornaleiro.model import SP, Asset, MarketResult
 
 
 class RendererFalso:
@@ -142,13 +142,13 @@ def test_run_continua_quando_um_mercado_falha(tmp_path, monkeypatch, capsys) -> 
 
 def test_localizar_config_ordem_de_preferencia(tmp_path, monkeypatch) -> None:
     explicito = tmp_path / "meu.toml"
-    monkeypatch.setenv("JORNAIS_CONFIG", str(tmp_path / "env.toml"))
+    monkeypatch.setenv("JORNALEIRO_CONFIG", str(tmp_path / "env.toml"))
 
     assert cli.localizar_config(str(explicito)) == explicito
     assert cli.localizar_config(None) == tmp_path / "env.toml"
 
     # sem --config nem env, vale o config.toml da pasta atual
-    monkeypatch.delenv("JORNAIS_CONFIG")
+    monkeypatch.delenv("JORNALEIRO_CONFIG")
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config.toml").write_text("", encoding="utf-8")
     assert cli.localizar_config(None) == Path("config.toml")

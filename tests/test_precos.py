@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from jornais import precos
+from jornaleiro import precos
 
 ATACADAO_TEXTO = """OFERTAS VÁLIDAS DE 13/10 A 19/10/2026
 Esta página é parte integrante das ofertas das lojas do estado de São Paulo

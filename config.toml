@@ -19,7 +19,7 @@ ocr_ld_library_path = "~/.local/share/tesslibs:~/.local/share/crlibs"
 ocr_idioma = "por"
 ocr_psm = 12             # 12 = texto esparso (melhor recall medido nos encartes)
 
-[historico]               # historico de precos em SQLite (indice dos CSVs; `jornais historico`)
+[historico]               # historico de precos em SQLite (indice dos CSVs; `jornaleiro historico`)
 db = ""                   # vazio: data/historico.sqlite; caminho relativo fica ao lado do config
 quedas_no_resumo = 3      # quedas de preco que o run mostra no resumo (0 = desliga)
 

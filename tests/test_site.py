@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from jornais import site
+from jornaleiro import site
 
 NO_REAL = {
     "id": "102104",

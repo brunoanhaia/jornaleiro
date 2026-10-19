@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from jornais import site
-from jornais.markets import examine
-from jornais.model import Context, MarketCfg
-from jornais.state import State
+from jornaleiro import site
+from jornaleiro.markets import examine
+from jornaleiro.model import Context, MarketCfg
+from jornaleiro.state import State
 
 CFG = {
     "site_graphql_jornal": "https://www.crescevendas.com/graphql",

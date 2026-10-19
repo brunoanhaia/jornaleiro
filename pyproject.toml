@@ -1,7 +1,7 @@
 [project]
-name = "jornais-mercados"
+name = "jornaleiro"
 version = "0.1.0"
-description = "Coleta os encartes dos mercados de Rio Claro/SP e envia por Telegram"
+description = "Jornaleiro: coleta os encartes de ofertas dos mercados de Rio Claro/SP e envia por Telegram"
 requires-python = ">=3.11"
 dependencies = [
     "httpx",
@@ -18,7 +18,7 @@ dependencies = [
 dev = ["pytest"]
 
 [project.scripts]
-jornais = "jornais.cli:main"
+jornaleiro = "jornaleiro.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

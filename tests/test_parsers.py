@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from jornais.markets import assai, atacadao, covabra, examine, savegnago
-from jornais.model import Context, MarketCfg
-from jornais.state import State
+from jornaleiro.markets import assai, atacadao, covabra, examine, savegnago
+from jornaleiro.model import Context, MarketCfg
+from jornaleiro.state import State
 
 TODAY = date(2026, 10, 15)
 

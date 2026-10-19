@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from jornais import render
+from jornaleiro import render
 
 
 class RespostaFalsa:

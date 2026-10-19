@@ -15,7 +15,7 @@ Medido nos encartes de 15/10/2026, ja com todas as paginas em A4:
         savegnago  3,56 MB -> 1,72 MB  (-52%)
         examine    0,56 MB -> 0,25 MB  (-54%)
 
-    modo `forte` (rasteriza cada pagina a 150 dpi, qualidade 60 - o que o `jornais run` usa)
+    modo `forte` (rasteriza cada pagina a 150 dpi, qualidade 60 - o que o `jornaleiro run` usa)
         assai      8,92 MB -> 1,68 MB  (-81%)
         atacadao  20,25 MB ->  3,74 MB (-82%)
         covabra    4,03 MB ->  0,81 MB (-80%)

@@ -9,7 +9,7 @@ import img2pdf
 from PIL import Image
 from pypdf import PdfReader
 
-from jornais import comprimir
+from jornaleiro import comprimir
 
 OPCOES = comprimir.Compressao(qualidade=60, largura_max=400)
 

@@ -6,7 +6,7 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
-from jornais import historico
+from jornaleiro import historico
 
 
 # --- helpers locais (gravam os CSVs no mesmo formato que o projeto grava) -----

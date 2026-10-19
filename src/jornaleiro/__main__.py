@@ -1,4 +1,4 @@
-"""Permite rodar sem o console script: `python -m jornais run`."""
+"""Permite rodar sem o console script: `python -m jornaleiro run`."""
 
 from .cli import main
 

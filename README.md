@@ -1,10 +1,10 @@
-# Encartes de mercados de Rio Claro → Telegram
+# Jornaleiro — encartes de mercados de Rio Claro → Telegram
 
 Coleta os encartes ("jornais de ofertas") vigentes dos mercados **Assaí, Atacadão,
 Covabra, Savegnago e Examine** na cidade de Rio Claro/SP, compila **um PDF por
 mercado**, lê os preços publicados nos encartes (e no catálogo do site do Examine)
 e envia os PDFs e os CSVs por Telegram com uma mensagem-resumo. A execução é manual
-(`jornais run`); não há agendador nem banco de dados.
+(`jornaleiro run`); não há agendador nem banco de dados como fonte de verdade.
 
 ## Fontes
 
@@ -25,7 +25,7 @@ e envia os PDFs e os CSVs por Telegram com uma mensagem-resumo. A execução é 
 ## Instalação
 
 ```bash
-cd ~/workspace/jornais-mercados
+cd ~/workspace/jornaleiro
 python3 -m venv .venv                     # se faltar ensurepip: apt install python3-venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/playwright install chromium
@@ -60,53 +60,53 @@ conta do clube Examine — com ele o encarte do Examine vem do jornal oficial do
 
 ```bash
 # coleta, compila e envia
-.venv/bin/jornais run
+.venv/bin/jornaleiro run
 
 # apenas gera os PDFs (não precisa de token/chat_id)
-.venv/bin/jornais run --no-send
+.venv/bin/jornaleiro run --no-send
 
 # só alguns mercados, e/ou forçando um renderizador
-.venv/bin/jornais run --only assai,covabra --renderer jina
+.venv/bin/jornaleiro run --only assai,covabra --renderer jina
 
 # depurar o renderizador (imprime os primeiros 2000 caracteres do texto renderizado)
-.venv/bin/jornais render "https://www.assai.com.br/sites/default/files/static/ofertas_assai.json"
+.venv/bin/jornaleiro render "https://www.assai.com.br/sites/default/files/static/ofertas_assai.json"
 
 # depurar a descoberta do post do Examine (semente, candidatos, legenda, imagem)
-.venv/bin/jornais examine-probe
+.venv/bin/jornaleiro examine-probe
 ```
 
 ```bash
 # le os precos dos PDFs que ja estao em data/<dia>/ (nao baixa nada)
-.venv/bin/jornais precos
-.venv/bin/jornais precos --only atacadao --json    # imprime os precos no stdout
-.venv/bin/jornais precos --dia 2026-10-15          # reprocessa um dia anterior
+.venv/bin/jornaleiro precos
+.venv/bin/jornaleiro precos --only atacadao --json    # imprime os precos no stdout
+.venv/bin/jornaleiro precos --dia 2026-10-15          # reprocessa um dia anterior
 
 # le o catalogo do site do Examine (preco estruturado, sem OCR)
-.venv/bin/jornais site-precos
-.venv/bin/jornais site-precos --max-categorias 2   # varredura parcial
+.venv/bin/jornaleiro site-precos
+.venv/bin/jornaleiro site-precos --max-categorias 2   # varredura parcial
 ```
 
 ```bash
 # retencao: apaga coletas de data/ mais velhas que 30 dias (--dry-run so lista)
-.venv/bin/jornais limpar --dias 30
-.venv/bin/jornais limpar --dias 30 --dry-run
+.venv/bin/jornaleiro limpar --dias 30
+.venv/bin/jornaleiro limpar --dias 30 --dry-run
 ```
 
 ```bash
 # historico em SQLite, derivado dos CSVs (banco em data/historico.sqlite)
-.venv/bin/jornais historico                    # o que ja tem no banco
-.venv/bin/jornais historico --reindex          # reconstroi o banco a partir dos CSVs
-.venv/bin/jornais historico --produto arroz    # leituras recentes do produto
-.venv/bin/jornais historico --quedas           # variacoes de preco (menor do dia)
+.venv/bin/jornaleiro historico                    # o que ja tem no banco
+.venv/bin/jornaleiro historico --reindex          # reconstroi o banco a partir dos CSVs
+.venv/bin/jornaleiro historico --produto arroz    # leituras recentes do produto
+.venv/bin/jornaleiro historico --quedas           # variacoes de preco (menor do dia)
 ```
 
 Opções de `run`: `--only k1,k2`, `--renderer auto|playwright|jina`, `--no-send`,
 `--sem-comprimir`, `--sem-ocr`, `--sem-precos` (só os jornais: não lê nem envia preços),
 `--forcar` (reenvia mesmo com o encarte idêntico ao último envio), `--data-dir DIR`,
 `--config ARQUIVO`. Mercados e URLs ficam em `config.toml`, procurado
-nesta ordem: `--config`, `$JORNAIS_CONFIG`, `./config.toml` e a raiz do repositório; um
+nesta ordem: `--config`, `$JORNALEIRO_CONFIG`, `./config.toml` e a raiz do repositório; um
 `data_dir` relativo no config é resolvido ao lado dele. Tudo roda igual como
-`python -m jornais ...`.
+`python -m jornaleiro ...`.
 
 Saída: `data/<AAAA-MM-DD>/<mercado>.pdf` (um por mercado, sobrescrito se rodar duas
 vezes no mesmo dia) e os arquivos brutos em `data/<AAAA-MM-DD>/raw/`. O `run` também
@@ -186,7 +186,7 @@ extraído. No fim, a execução fica assim:
 ```bash
 LD_LIBRARY_PATH=$HOME/.local/share/crlibs \
 FONTCONFIG_FILE=$HOME/.local/share/chromium-etc/etc/fonts/local.conf \
-.venv/bin/jornais run
+.venv/bin/jornaleiro run
 ```
 
 Sem essa ginástica, use `--renderer jina` (ou deixe o `auto` cair nele sozinho).
@@ -212,7 +212,7 @@ não misturar folhetos de execuções anteriores.
 
 ## Preços dos encartes
 
-`jornais precos` lê os preços dos PDFs já baixados em `data/<dia>/` (não baixa nada de
+`jornaleiro precos` lê os preços dos PDFs já baixados em `data/<dia>/` (não baixa nada de
 novo) e grava `data/<dia>/precos/<mercado>.csv` e `<mercado>.json`, com as colunas
 `mercado;pagina;produto;preco;ordem;tipo` (o CSV sai com BOM, `utf-8-sig`, para abrir
 direto no Excel pt-BR).
@@ -255,7 +255,7 @@ idioma e o `psm` (12 = texto esparso, que foi o melhor medido). O tesseract **n�
 com o Playwright; nesta máquina ele foi extraído dos `.deb` para
 `~/.local/share/tesseract` com as bibliotecas em `~/.local/share/tesslibs` (o deps do
 Chromium não serve para ele), e é isso que `ocr_ld_library_path` aponta. Se o binário
-não existir, `jornais run` e `jornais precos` seguem funcionando e o resumo diz
+não existir, `jornaleiro run` e `jornaleiro precos` seguem funcionando e o resumo diz
 `precos: OCR indisponivel`. `--sem-ocr` desliga o OCR pontualmente.
 
 Limitações conhecidas, todas verificadas nos encartes de hoje: no Atacadão/Covabra/
@@ -271,7 +271,7 @@ real e pouco lixo entram); o encarte em imagem do Examine não é lido por OCR (
 com preço estilizado) — para esse mercado a leitura vem do catálogo do site, abaixo.
 Os PDFs continuam no `data/<dia>/` para conferência.
 
-`jornais run` também lê os preços do PDF que acabou de gerar, grava os mesmos
+`jornaleiro run` também lê os preços do PDF que acabou de gerar, grava os mesmos
 `data/<dia>/precos/<mercado>.csv|json`, põe a contagem na mensagem do Telegram
 (uma linha por mercado, ex.: `| 256 itens/573 precos`) e manda o CSV como documento
 logo depois do PDF do mercado. O marcador de fonte aparece quando a leitura não veio
@@ -280,11 +280,11 @@ arquivo do mercado ficou sem OCR); se a leitura falhar, a linha vira
 `precos: falha (motivo)` e o PDF do mercado ainda é enviado. `enviar = false` em
 `[precos]` desliga só o envio dos CSVs. `ler = false` desliga a leitura de preços no
 `run` (só coleta os jornais; o resumo traz a validade, sem contagem de preços) — o
-subcomando `jornais precos` continua lendo sob demanda.
+subcomando `jornaleiro precos` continua lendo sob demanda.
 
 ### Encarte oficial do Examine (jornal do site)
 
-Com `EXAMINE_TOKEN` no `.env` (Bearer da conta do clube), `jornais run` pega o encarte do
+Com `EXAMINE_TOKEN` no `.env` (Bearer da conta do clube), `jornaleiro run` pega o encarte do
 Examine pela consulta `pamphlets { file id title }` da mesma API — é o "Jornal de
 Ofertas" oficial, página por página, agrupado por campanha (em 16/10/2026: 9 páginas,
 `Show de Economia 💚` com 5, mais banners de campanha). O PDF do Examine passa a ter
@@ -299,7 +299,7 @@ os dois de lugar dá `Field 'pamphlets' doesn't exist on type 'Query'` — já a
 
 O site `superexaminerc.crescevendas.com` é um Next.js que conversa com a API GraphQL
 `www.crescevendas.com/ecommerce/graphql` (cliente resolvido pelo `Origin` do tenant; a
-consulta `app_version` responde `client_id=377, name="Examine"`). `jornais site-precos`
+consulta `app_version` responde `client_id=377, name="Examine"`). `jornaleiro site-precos`
 varre `categories` e `products(categoryId, after)` — as mesmas consultas que o site usa —
 e grava `data/<dia>/precos/examine.csv|json` com `id;categoria;produto;preco;pesavel;unidade;estoque;descontos`.
 `--max-categorias N` limita a varredura (bom para teste). O campo `descontos` vem como
@@ -310,21 +310,21 @@ Comparado com e sem `Authorization`, os preços e descontos são **idênticos** 
 nos encartes de 15/10/2026): o token destrava o jornal, não preço extra. E este é
 **preço do site**, não o preço impresso no encarte da semana; por isso ele não substitui
 o PDF, mas é estruturado (nome, código, estoque, peso, descontos) e não depende de OCR.
-Em `jornais run`, `[markets.examine] precos_site = true` faz a leitura de preços do
+Em `jornaleiro run`, `[markets.examine] precos_site = true` faz a leitura de preços do
 Examine vir daqui (o CSV vai junto dos PDFs) e pula o OCR do encarte em imagem, que não
 lia nada.
 
 ## Histórico de preços (SQLite)
 
-`jornais historico` indexa os CSVs de `data/<dia>/precos/` num banco SQLite
+`jornaleiro historico` indexa os CSVs de `data/<dia>/precos/` num banco SQLite
 (`data/historico.sqlite`, caminho em `[historico] db` do `config.toml`); o banco **não**
 entra no git e é descartável — `--reindex` o reconstrói dos CSVs a qualquer momento:
 
 ```bash
-.venv/bin/jornais historico                    # precos/coletas/site no banco
-.venv/bin/jornais historico --reindex          # reconstroi dos CSVs de data/
-.venv/bin/jornais historico --produto "arroz"  # ultimas leituras do produto (trecho do nome)
-.venv/bin/jornais historico --quedas --dias 30 # so as quedas da janela
+.venv/bin/jornaleiro historico                    # precos/coletas/site no banco
+.venv/bin/jornaleiro historico --reindex          # reconstroi dos CSVs de data/
+.venv/bin/jornaleiro historico --produto "arroz"  # ultimas leituras do produto (trecho do nome)
+.venv/bin/jornaleiro historico --quedas --dias 30 # so as quedas da janela
 ```
 
 `--quedas` usa o **menor preço do dia** por (mercado, produto normalizado — sem acento,
@@ -341,7 +341,7 @@ No `run`, o banco só é atualizado se **já existir** (nunca derruba a execuç�
 substituído inteiro (`registrar_dia`), então rodar duas vezes no mesmo dia não duplica
 nada. As quedas da janela de 30 dias entram no resumo do Telegram quando
 `[historico] quedas_no_resumo > 0` (padrão 3; o bloco está no exemplo de mensagem
-acima). `jornais limpar` reindexa o banco depois de apagar as coletas, para ele não
+acima). `jornaleiro limpar` reindexa o banco depois de apagar as coletas, para ele não
 apontar para dia removido.
 
 ## Estado e a semente do Examine

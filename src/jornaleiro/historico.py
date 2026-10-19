@@ -2,7 +2,7 @@
 
 A fonte de verdade continua sendo `data/<dia>/precos/*.csv` (com PDFs e brutos ao
 lado); o banco e apenas um indice para consulta, recriavel a qualquer momento com
-`jornais historico --reindex`. Ele fica em `data/historico.sqlite` — dentro de
+`jornaleiro historico --reindex`. Ele fica em `data/historico.sqlite` — dentro de
 `data/`, que nao entra no git — e o `run` atualiza o dia quando o banco ja existe.
 
 Nomes de produto sao normalizados (`produto_norm`: sem acento, minusculo) para o

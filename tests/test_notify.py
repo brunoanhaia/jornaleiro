@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from jornais import notify
+from jornaleiro import notify
 
 API = "https://api.telegram.org/bot123/fake"
 
