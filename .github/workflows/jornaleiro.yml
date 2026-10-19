@@ -10,6 +10,10 @@ on:
         description: "Reenviar mesmo com encarte identico ao ultimo envio"
         type: boolean
         default: false
+      sem_envio:
+        description: "So coleta: nao publica nada no Telegram"
+        type: boolean
+        default: false
 
 # minimo necessario: empurrar o branch `estado` com o GITHUB_TOKEN do proprio run
 permissions:
@@ -23,12 +27,12 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # secrets ficam presos a este environment (deployment branches: main)
+    # secrets ficam presos a este environment (a restricao de branches pede admin)
     environment: producao
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -66,11 +70,10 @@ jobs:
           EXAMINE_TOKEN: ${{ secrets.EXAMINE_TOKEN }}
           JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
         run: |
-          if [ "${{ inputs.forcar }}" = "true" ]; then
-            jornaleiro run --forcar
-          else
-            jornaleiro run
-          fi
+          OPCOES=""
+          if [ "${{ inputs.forcar }}" = "true" ]; then OPCOES="$OPCOES --forcar"; fi
+          if [ "${{ inputs.sem_envio }}" = "true" ]; then OPCOES="$OPCOES --no-send"; fi
+          jornaleiro run $OPCOES
 
       - name: Salvar o estado no branch `estado`
         if: always()
