@@ -68,7 +68,8 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
 - `run` não aborta por mercado: sai `0` mesmo com falha parcial, `1` se nenhum PDF sair ou
   todos falharem, `2` para erro de config.
 - `.github/workflows/jornaleiro.yml` — coleta diária (cron/dispatch), restauração/commit
-  do `state.json` no branch `estado`; sem artifacts nem binários versionados.
+  do `state.json` no branch `estado`; os PDFs do dia sobem como artifact
+  (`jornais-<run_number>`, 7 dias) e nada binário é versionado.
 
 ## Armadilhas
 
