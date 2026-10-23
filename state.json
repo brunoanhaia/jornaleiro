@@ -22,28 +22,28 @@
     },
     "atacadao": {
       "dia": "2026-10-22",
-      "enviado": false,
+      "enviado": true,
       "itens": 0,
       "precos": 0,
       "sha": "025d870974bb28ddb99b57475d5facf374a8a0756d81cbbf68e9cee09c53d5ce"
     },
     "covabra": {
       "dia": "2026-10-22",
-      "enviado": false,
+      "enviado": true,
       "itens": 0,
       "precos": 0,
       "sha": "fb1b3e9cba0c3636059784dd8fe64728275881deb43e17429d1b06850d96746b"
     },
     "examine": {
       "dia": "2026-10-22",
-      "enviado": false,
+      "enviado": true,
       "itens": 0,
       "precos": 0,
-      "sha": "b059b837c5b71e4e9bf58815d7ce99a318c08f8882ebf68534944d2ffbb46053"
+      "sha": "f3955358715612fed4f9975eaa80582e0752840beafb6dcd765a1f88c661f1e4"
     },
     "savegnago": {
       "dia": "2026-10-22",
-      "enviado": false,
+      "enviado": true,
       "itens": 0,
       "precos": 0,
       "sha": "9297bfff4d6f4675550fab1d9cce4ae8c62ecbb1aac12457f874bab92e80c99b"
