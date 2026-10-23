@@ -1,0 +1,38 @@
+# Roda os testes em PR e push para o main. A ruleset da branch exige o CodeQL
+# (.github/workflows/codeql.yml); a regra de cobertura dela so age com o GitHub Code
+# Quality habilitado (recurso pago e desligado aqui — o upload responde 404), entao
+# enquanto isso este workflow so roda o pytest.
+name: Testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Baixar o repositorio
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Preparar o Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar o pacote
+        run: python -m pip install -e ".[dev]"
+
+      - name: Rodar os testes
+        run: python -m pytest -q
