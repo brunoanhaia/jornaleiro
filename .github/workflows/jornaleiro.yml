@@ -41,9 +41,15 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Instalar o pacote e o Chromium
+        # sem `--with-deps`: as bibliotecas do Chromium ja vem no ubuntu-latest e o
+        # apt do runner ja levou ~8 min num mirror lento. `--only-shell` baixa so o
+        # headless shell, que e o modo usado pelo renderer. Se o download falhar ou
+        # o browser nao subir, o renderer `auto` cai no jina (JINA_API_KEY).
         run: |
           python -m pip install -e .
-          python -m playwright install --with-deps chromium
+          if ! python -m playwright install --only-shell chromium; then
+            echo "::warning::Chromium indisponivel; o renderer auto vai usar o jina"
+          fi
 
       - name: Conferir os segredos
         # run --no-send nao precisa de token/chat_id (serve para validar sem Telegram)
@@ -90,6 +96,20 @@ jobs:
           if [ "${{ inputs.forcar }}" = "true" ]; then OPCOES="$OPCOES --forcar"; fi
           if [ "${{ inputs.sem_envio }}" = "true" ]; then OPCOES="$OPCOES --no-send"; fi
           jornaleiro run $OPCOES
+
+      - name: Guardar os jornais como artifact
+        # `always()` aproveita os PDFs de um run com falha parcial; como eles ja
+        # estao comprimidos, `compression-level: 0` evita rezipar. Retencao curta
+        # (7 dias): o envio normal e pelo Telegram.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: jornais-${{ github.run_number }}
+          path: data/*/*.pdf
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
 
       - name: Salvar o estado no branch `estado`
         if: always()

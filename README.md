@@ -30,8 +30,8 @@ verdade.
 cd ~/workspace/jornaleiro
 python3 -m venv .venv                     # se faltar ensurepip: apt install python3-venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/playwright install chromium
-sudo .venv/bin/playwright install-deps chromium   # bibliotecas de sistema do Chromium
+.venv/bin/playwright install --only-shell chromium   # so o headless shell (modo usado)
+sudo .venv/bin/playwright install-deps chromium     # bibliotecas de sistema do Chromium
 ```
 
 Se a máquina não tiver as bibliotecas de sistema e você não tiver root, veja
@@ -374,15 +374,19 @@ tarde só envia se aparecer encarte novo, pelo mesmo sha256) e também por
 `workflow_dispatch` — o botão *Run workflow* tem as opções `forcar` (reenviar mesmo com
 o encarte idêntico ao último envio) e `sem_envio` (só coleta, sem publicar nada no
 Telegram: valida instalação e downloads sem incomodar o grupo). O run instala o pacote e
-o Chromium do Playwright (necessário para o Assaí) e não precisa de tesseract enquanto
+só o **headless shell** do Chromium (`--only-shell`, sem `--with-deps`: as bibliotecas
+de sistema já vêm no `ubuntu-latest`) — ele é necessário para o Assaí e, se não subir, o
+renderer `auto` cai no Jina (`JINA_API_KEY`). Não precisa de tesseract enquanto
 `[precos] ler = false`.
 
 O runner é efêmero: `data/` não sobrevive entre execuções. Por isso o `data/state.json`
 — a memória do "não reenviar o mesmo encarte" e a semente do Examine — fica no branch
 `estado`, restaurado antes do run e atualizado depois (um commit por execução que muda o
 estado; o primeiro estado veio da máquina local). Nenhum PDF vai para o git: os binários
-existem só no runner durante o job (o envio é pelo Telegram) e `data/` continua ignorado —
-o branch `estado` guarda apenas o JSON. Se um run morrer entre o envio e o commit do
+existem só no runner durante o job e `data/` continua ignorado — o branch `estado` guarda
+apenas o JSON. No fim do run os PDFs do dia sobem como artifact
+(`jornais-<run_number>`, retenção de 7 dias, na seção *Artifacts* da página do run); o
+envio normal continua sendo pelo Telegram. Se um run morrer entre o envio e o commit do
 estado, o próximo pode reenviar o mesmo encarte (duplicata); nunca pula um encarte novo.
 
 ### Configuração (uma vez)
