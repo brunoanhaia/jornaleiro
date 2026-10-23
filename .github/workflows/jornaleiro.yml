@@ -98,8 +98,23 @@ jobs:
             echo "sem state.json para salvar"
             exit 0
           fi
-          git fetch --quiet --depth=1 origin estado
-          git worktree add --quiet --detach /tmp/estado FETCH_HEAD
+          if git fetch --quiet --depth=1 origin estado; then
+            git worktree add --quiet --detach /tmp/estado FETCH_HEAD
+          else
+            # fetch falhou: so cria o branch se ele realmente nao existe; falha transitoria
+            # aborta para nao gravar o estado num branch novo por engano
+            CODIGO=0
+            git ls-remote --exit-code --heads origin estado >/dev/null 2>&1 || CODIGO=$?
+            if [ "$CODIGO" -ne 2 ]; then
+              echo "::error::nao consegui buscar o branch estado (codigo $CODIGO)"
+              exit 1
+            fi
+            echo "branch estado ainda nao existe; criando"
+            git worktree add --quiet --detach /tmp/estado
+            git -C /tmp/estado checkout --quiet --orphan estado
+            # o checkout --orphan deixa os arquivos do HEAD no index: o branch guarda so o JSON
+            git -C /tmp/estado rm -rf --quiet .
+          fi
           cp data/state.json /tmp/estado/state.json
           git -C /tmp/estado add state.json
           if git -C /tmp/estado diff --cached --quiet; then
