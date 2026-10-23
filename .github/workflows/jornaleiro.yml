@@ -2,8 +2,10 @@ name: Jornaleiro
 
 on:
   schedule:
-    # 08:00 em America/Sao_Paulo (o cron do Actions e UTC e pode atrasar alguns minutos)
-    - cron: "0 11 * * *"
+    # 07:00 e 19:00 em America/Sao_Paulo (o cron do Actions e UTC e pode atrasar alguns
+    # minutos); o 2o run do dia so reenvia se aparecer encarte novo
+    - cron: "0 10 * * *"
+    - cron: "0 22 * * *"
   workflow_dispatch:
     inputs:
       forcar:

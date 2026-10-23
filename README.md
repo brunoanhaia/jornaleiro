@@ -4,8 +4,9 @@ Coleta os encartes ("jornais de ofertas") vigentes dos mercados **Assaí, Atacad
 Covabra, Savegnago e Examine** na cidade de Rio Claro/SP, compila **um PDF por
 mercado**, lê os preços publicados nos encartes (e no catálogo do site do Examine)
 e envia os PDFs e os CSVs por Telegram com uma mensagem-resumo. A execução é manual
-(`jornaleiro run`) ou agendada no GitHub Actions, uma vez por dia (ver *Coleta diária no
-GitHub Actions*); o SQLite é um índice derivado dos CSVs, não a fonte de verdade.
+(`jornaleiro run`) ou agendada no GitHub Actions, duas vezes por dia (07:00 e 19:00, ver
+*Coleta diária no GitHub Actions*); o SQLite é um índice derivado dos CSVs, não a fonte de
+verdade.
 
 ## Fontes
 
@@ -367,8 +368,9 @@ Para forçar o Examine a reavaliar posts antigos, apague as duas chaves (ou o
 
 ## Coleta diária no GitHub Actions
 
-`.github/workflows/jornaleiro.yml` roda `jornaleiro run` todo dia às 08:00 (horário de
-Brasília; o cron do Actions é UTC e pode atrasar alguns minutos) e também por
+`.github/workflows/jornaleiro.yml` roda `jornaleiro run` todo dia às 07:00 e às 19:00
+(horário de Brasília; o cron do Actions é UTC e pode atrasar alguns minutos; o run da
+tarde só envia se aparecer encarte novo, pelo mesmo sha256) e também por
 `workflow_dispatch` — o botão *Run workflow* tem as opções `forcar` (reenviar mesmo com
 o encarte idêntico ao último envio) e `sem_envio` (só coleta, sem publicar nada no
 Telegram: valida instalação e downloads sem incomodar o grupo). O run instala o pacote e
@@ -377,11 +379,11 @@ o Chromium do Playwright (necessário para o Assaí) e não precisa de tesseract
 
 O runner é efêmero: `data/` não sobrevive entre execuções. Por isso o `data/state.json`
 — a memória do "não reenviar o mesmo encarte" e a semente do Examine — fica no branch
-`estado`, restaurado antes do run e atualizado depois (um commit por dia; o primeiro
-estado veio da máquina local). Nenhum PDF vai para o git: os binários existem só no
-runner durante o job (o envio é pelo Telegram) e `data/` continua ignorado — o branch
-`estado` guarda apenas o JSON. Se um run morrer entre o envio e o commit do estado, o
-próximo pode reenviar o mesmo encarte (duplicata); nunca pula um encarte novo.
+`estado`, restaurado antes do run e atualizado depois (um commit por execução que muda o
+estado; o primeiro estado veio da máquina local). Nenhum PDF vai para o git: os binários
+existem só no runner durante o job (o envio é pelo Telegram) e `data/` continua ignorado —
+o branch `estado` guarda apenas o JSON. Se um run morrer entre o envio e o commit do
+estado, o próximo pode reenviar o mesmo encarte (duplicata); nunca pula um encarte novo.
 
 ### Configuração (uma vez)
 
