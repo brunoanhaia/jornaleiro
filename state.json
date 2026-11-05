@@ -21,32 +21,32 @@
       "sha": "23908bd1b6cb0c1182b629af65302a9789fb07b86a6f8e960b5ac9d57221ba0d"
     },
     "atacadao": {
-      "dia": "2026-11-04",
+      "dia": "2026-11-05",
       "enviado": true,
       "itens": 0,
       "precos": 0,
-      "sha": "4720c1f5a6455ef715b30592caadc02fc8c7f249fcbea41301eeadb23f0a081d"
+      "sha": "5f61661d96307cd9c24729570ce94acd88ad587a407212ec83b1b4241f0dc735"
     },
     "covabra": {
-      "dia": "2026-11-04",
+      "dia": "2026-11-05",
       "enviado": true,
       "itens": 0,
       "precos": 0,
-      "sha": "43be88b47f9aad3cb5353980570a804df2eca0528bc631cbe43fece978401a26"
+      "sha": "fea46ac6c6a3d846490a85a08de1add69c88f6bc6c953238c918fabb98e5108b"
     },
     "examine": {
-      "dia": "2026-11-04",
+      "dia": "2026-11-05",
       "enviado": true,
       "itens": 0,
       "precos": 0,
-      "sha": "3c2498bb8b03cbf8e32170cde9c80dd5153c882cf524699cc441874f295b72c9"
+      "sha": "a3e41af93d2e083444ff1df49e0ff442777b18f40006c0e9cfb553f31b716e2f"
     },
     "savegnago": {
-      "dia": "2026-11-04",
+      "dia": "2026-11-05",
       "enviado": true,
       "itens": 0,
       "precos": 0,
-      "sha": "5271ff7f9fc536892bb90e6d6ef7f180c4640ff3c4e4a2341cb60a51ae00852c"
+      "sha": "e9cc00223cd16ce1bac22aeace94ec7cb27964d12668f273f41d14dbc616c01b"
     }
   }
 }
