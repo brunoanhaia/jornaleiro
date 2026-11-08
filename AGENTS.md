@@ -79,9 +79,14 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
 - `pamphlets` (jornal oficial do Examine) só existe no endpoint `site_graphql_jornal`
   (`www.crescevendas.com/graphql`); o catálogo usa `site_graphql` (`.../ecommerce/graphql`).
   Inverter os dois dá `Field 'pamphlets' doesn't exist on type 'Query'`.
-- Assaí: o JSON de ofertas está atrás do challenge Imperva — só responde dentro de uma
-  página já carregada (`renderer.fetch_json_in_page`), e a URL leva `?v=<timestamp>`
-  (`assai._uncached`) para escapar do CDN congelado por semanas.
+- Assaí: o JSON de ofertas está atrás do challenge Imperva — o caminho normal é dentro de
+  uma página já carregada (`renderer.fetch_json_in_page`), com fallback para HTTP direto do
+  JSON e da página de ofertas (`assai._json_texto`/`_offers_html`) quando o renderizador
+  recebe 403. A URL leva `?v=<timestamp>` (`assai._uncached`) para escapar do CDN congelado
+  por semanas. Se uma imagem der 403 no HTTP direto, `_baixar_imagem` tenta de novo pelo
+  navegador (`renderer.fetch_bytes_in_page`), reaproveitando cookies/fingerprint do
+  challenge. O erro final lista URL e as duas tentativas (`http:`/`renderer:`), para
+  diagnosticar um 403 sem log completo.
 - Atacadão: `validity` vem como meia-noite UTC com a data local do cliente — não converta
   fuso horário (a janela andaria um dia; ver docstring de `atacadao._bound`).
 - Atacadão: preços e nomes são lidos **por coordenadas** (`precos._MERCADOS_COLUNAS`).
