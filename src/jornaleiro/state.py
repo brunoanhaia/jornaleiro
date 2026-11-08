@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import suppress
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
-
 
 LIMITE_SEEN = 200  # shortcodes guardados em `examine_seen` (mais recentes primeiro)
 
@@ -26,7 +26,7 @@ class State:
         self.data: dict[str, Any] = dict(data or {})
 
     @classmethod
-    def load(cls, path: Path) -> "State":
+    def load(cls, path: Path) -> State:
         if not path.exists():
             return cls(path)
         try:
@@ -74,5 +74,6 @@ class State:
         try:
             os.replace(temporario, self.path)
         except OSError:
-            temporario.unlink(missing_ok=True)
+            with suppress(FileNotFoundError):
+                temporario.unlink()
             raise

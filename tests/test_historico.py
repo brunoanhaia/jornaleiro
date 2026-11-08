@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from datetime import date
 from pathlib import Path
 
 from jornaleiro import historico
-
 
 # --- helpers locais (gravam os CSVs no mesmo formato que o projeto grava) -----
 
@@ -59,7 +59,8 @@ def _bruto_falso(data_dir: Path, dia: str, mercado: str, tamanho: int = 10) -> N
 
 
 def _ler(sql: str, db: Path, parametros: tuple = ()) -> list[tuple]:
-    with sqlite3.connect(db) as conexao:
+    # `with sqlite3.connect(...)` so faz commit/rollback; `closing` fecha de verdade
+    with closing(sqlite3.connect(db)) as conexao:
         return conexao.execute(sql, parametros).fetchall()
 
 

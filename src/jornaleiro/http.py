@@ -101,7 +101,11 @@ def _request(
             )
         return resp
 
-    raise last  # pragma: no cover - inalcancavel (o loop sempre retorna ou levanta)
+    # inalcancavel (o loop sempre retorna ou levanta); o guarda existe para o
+    # analisador estatico e para deixar claro que `last` nao e `None` aqui
+    if last is None:  # pragma: no cover
+        raise RuntimeError("nenhuma tentativa executada")
+    raise last  # pragma: no cover
 
 
 def get_bytes(url: str, **kwargs: Any) -> bytes:

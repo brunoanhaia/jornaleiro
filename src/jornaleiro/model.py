@@ -55,6 +55,16 @@ class Context:
     state: Any  # jornaleiro.state.State
 
 
+def data_br(texto: object) -> date:
+    """Data de calendario `dd/mm/aaaa` (sem fuso: e a data impressa no encarte).
+
+    Levanta `ValueError` se o texto nao for uma data valida; os mercados tratam
+    isso como "sem validade" em vez de derrubar a coleta.
+    """
+    dia, mes, ano = str(texto).strip().split("/")
+    return date(int(ano), int(mes), int(dia))
+
+
 def describe_error(exc: BaseException) -> str:
     """Mensagem curta e estavel para o resumo/nota do mercado."""
     if isinstance(exc, httpx.HTTPStatusError):

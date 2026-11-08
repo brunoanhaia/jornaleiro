@@ -67,7 +67,7 @@ def test_erro_de_transporte_tenta_de_novo_com_backoff(monkeypatch: pytest.Monkey
 def test_429_e_5xx_sao_tentados_de_novo_e_falham_na_ultima(monkeypatch: pytest.MonkeyPatch) -> None:
     for status in (429, 503):
         cliente = ClienteFalso([resposta(status) for _ in range(3)])
-        monkeypatch.setattr(http, "client", lambda: cliente)
+        monkeypatch.setattr(http, "client", lambda cliente=cliente: cliente)
         sleeps: list[float] = []
         monkeypatch.setattr(http.time, "sleep", sleeps.append)
 

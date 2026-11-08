@@ -11,14 +11,14 @@ passou, a validade sai marcada com `(vencido)` no resumo.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date
 from email.utils import parsedate_to_datetime
 from io import BytesIO
 
 from pypdf import PdfReader
 
 from .. import http
-from ..model import Asset, Context, MarketCfg, MarketResult, SP
+from ..model import SP, Asset, Context, MarketCfg, MarketResult, data_br
 
 KEY = "savegnago"
 LABEL = "Savegnago"
@@ -64,7 +64,7 @@ def validade_texto(texto: str, hoje: date) -> str | None:
     for linha in _VALIDADE.findall(texto):
         for achada in _DATA.findall(linha):
             try:
-                datas.append(datetime.strptime(achada, "%d/%m/%Y").date())
+                datas.append(data_br(achada))
             except ValueError:
                 continue
     if not datas:

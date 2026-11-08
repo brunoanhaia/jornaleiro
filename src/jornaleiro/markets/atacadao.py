@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from urllib.parse import quote
 
 from .. import http
@@ -92,6 +92,6 @@ def _bound(flyer: dict, side: str) -> date | None:
     if not raw:
         return None
     try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).date()
+        return date.fromisoformat(str(raw)[:10])
     except ValueError:
         return None

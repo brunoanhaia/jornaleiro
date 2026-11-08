@@ -37,4 +37,4 @@ def safe_fetch(module: ModuleType, ctx: Context, cfg: MarketCfg) -> MarketResult
     return result
 
 
-__all__ = ["REGISTRY", "ORDER", "safe_fetch"]
+__all__ = ["ORDER", "REGISTRY", "safe_fetch"]
