@@ -1,0 +1,9 @@
+# Configuracao do Prospector (usada pelo Codacy).
+#
+# O codigo do projeto segue D212 (resumo na primeira linha da docstring). O
+# pydocstyle roda com D212 e D213 habilitados ao mesmo tempo, o que faz toda
+# docstring multilinha falhar em uma das duas regras; desligamos D213 para
+# valer a convencao que o repositorio ja usa.
+pydocstyle:
+  disable:
+    - D213

@@ -21,7 +21,9 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
   `.venv/bin/python -m pytest tests/test_precos.py::test_nome -q`.
 - Os testes não acessam a rede (fixtures inline recortadas de respostas reais, renderer
   falso, `monkeypatch` de `http`); escreva testes novos no mesmo estilo.
-- Não há lint, formatador nem typecheck configurados; o pytest é a única verificação.
+- Não há lint, formatador nem typecheck configurados; o pytest é a única verificação
+  local. O Codacy roda o Prospector com `.prospector.yaml` (convenção D212: resumo na
+  primeira linha da docstring), então docstrings multilinha novas devem seguir D212.
 - Iterar na extração de preços sem rede: `.venv/bin/jornaleiro precos --dia AAAA-MM-DD`
   reprocessa os PDFs já baixados em `data/<dia>/`.
 - Debug: `.venv/bin/jornaleiro render <url>` imprime o texto renderizado;
