@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from io import BytesIO
 
+import img2pdf
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
@@ -29,8 +30,27 @@ def pdf_com_pagina(largura: float, altura: float) -> bytes:
     return buffer.getvalue()
 
 
+def pdf_com_conteudo(largura: int, altura: int) -> bytes:
+    """PDF com content stream de verdade (diferente de `add_blank_page`)."""
+    return img2pdf.convert([jpeg(largura, altura)])
+
+
 def resultado(assets: list[Asset]) -> MarketResult:
     return MarketResult(key="x", label="X", status="ok", assets=assets)
+
+
+def test_pdf_com_conteudo_e_transformado_depois_de_anexar_ao_writer() -> None:
+    """Regressao do pypdf 7: transformar pagina do reader dispara DeprecationError."""
+    assets = [
+        Asset(url="a", content=pdf_com_conteudo(300, 900), kind="pdf", suffix=".pdf"),
+        Asset(url="b", content=pdf_com_conteudo(1162, 1502), kind="pdf", suffix=".pdf"),
+    ]
+
+    pdf = compose.build_pdf(resultado(assets))
+
+    paginas = PdfReader(BytesIO(pdf)).pages
+    assert len(paginas) == 2
+    assert {tuple(round(float(valor)) for valor in pagina.mediabox[2:]) for pagina in paginas} == {A4}
 
 
 def test_imagens_e_pdf_saem_todos_em_a4() -> None:
