@@ -29,11 +29,11 @@ precos parte dos arquivos brutos em `data/<dia>/raw/`, que nunca passam por comp
 from __future__ import annotations
 
 import io
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import img2pdf
-from PIL import Image
 from pikepdf import Name, ObjectStreamMode, Pdf, PdfImage
+from PIL import Image
 
 A4 = (img2pdf.mm_to_pt(210), img2pdf.mm_to_pt(297))  # retrato, em pontos
 CORES_SEGURAS = ("/DeviceRGB", "/DeviceGray", "/DeviceCMYK")
@@ -117,7 +117,7 @@ def _jpeg_em_a4(imagem: Image.Image, opcoes: Compressao) -> bytes:
 
     alvo = _pixels(opcoes.pagina, opcoes.dpi)
     copia = imagem.copy()
-    copia.thumbnail(alvo, Image.LANCZOS)
+    copia.thumbnail(alvo, Image.Resampling.LANCZOS)
     pagina = Image.new("RGB", alvo, "white")
     pagina.paste(copia, ((alvo[0] - copia.width) // 2, (alvo[1] - copia.height) // 2))
     buffer = io.BytesIO()
@@ -143,7 +143,7 @@ def _reencodar(pdf: Pdf, objeto, opcoes: Compressao):
         if achatou:
             mascara = PdfImage(objeto.SMask).as_pil_image().convert("L")
             if mascara.size != imagem.size:
-                mascara = mascara.resize(imagem.size, Image.LANCZOS)
+                mascara = mascara.resize(imagem.size, Image.Resampling.LANCZOS)
             fundo = Image.new("RGB", imagem.size, "white")
             imagem = Image.composite(imagem.convert("RGB"), fundo, mascara)
     except Exception:  # noqa: BLE001 - imagem que o pikepdf/Pillow nao decodifica
@@ -158,7 +158,7 @@ def _reencodar(pdf: Pdf, objeto, opcoes: Compressao):
     largura_max = opcoes.largura_max if (achatou or not tem_mascara) else 0
     if largura_max and imagem.width > largura_max:
         altura = max(1, round(imagem.height * largura_max / imagem.width))
-        imagem = imagem.resize((largura_max, altura), Image.LANCZOS)
+        imagem = imagem.resize((largura_max, altura), Image.Resampling.LANCZOS)
 
     buffer = io.BytesIO()
     try:

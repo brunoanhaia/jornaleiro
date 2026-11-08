@@ -49,7 +49,9 @@ class Telegram:
                 raise RuntimeError(f"telegram {method}: {payload.get('description')}")
             return payload
 
-        raise last  # pragma: no cover - inalcancavel
+        if last is None:  # pragma: no cover - inalcancavel
+            raise RuntimeError("nenhuma tentativa executada")
+        raise last  # pragma: no cover
 
     @staticmethod
     def _retry_after(resp: httpx.Response, attempt: int) -> float:

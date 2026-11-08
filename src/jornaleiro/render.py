@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import sys
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from . import http
 
@@ -22,11 +23,17 @@ _PLAYWRIGHT_OK: bool | None = None
 class Renderer(Protocol):
     name: str
 
-    def get_text(self, url: str) -> str: ...
+    def get_text(self, url: str) -> str:
+        ...
 
-    def fetch_json_in_page(self, url: str, warmup_url: str) -> str: ...
+    def fetch_json_in_page(self, url: str, warmup_url: str) -> str:
+        ...
 
-    def close(self) -> None: ...
+    def fetch_bytes_in_page(self, url: str, warmup_url: str) -> bytes:
+        ...
+
+    def close(self) -> None:
+        ...
 
 
 class PlaywrightRenderer:
@@ -43,18 +50,38 @@ class PlaywrightRenderer:
             viewport={"width": 1366, "height": 900},
         )
         self._page = self._ctx.new_page()
+        self._origem: str | None = None
 
     def get_text(self, url: str) -> str:
         self._page.goto(url, wait_until="domcontentloaded")
         self._page.wait_for_timeout(3000)
+        self._origem = _origem(url)
         return self._page.content()
 
     def fetch_json_in_page(self, url: str, warmup_url: str) -> str:
-        self._page.goto(warmup_url, wait_until="domcontentloaded")
-        self._page.wait_for_timeout(3000)
+        self._aquecer(warmup_url)
         return self._page.evaluate(
             "async u => await (await fetch(u, {credentials: 'same-origin'})).text()", url
         )
+
+    def fetch_bytes_in_page(self, url: str, warmup_url: str) -> bytes:
+        """Baixa um binario navegando na mesma sessao (cookies/fingerprint do site)."""
+        self._aquecer(warmup_url)
+        response = self._page.goto(url, wait_until="commit")
+        if response is None:
+            raise RuntimeError(f"sem resposta do navegador para {url}")
+        if response.status >= 400:
+            raise RuntimeError(f"HTTP {response.status} no navegador para {url}")
+        return response.body()
+
+    def _aquecer(self, warmup_url: str) -> None:
+        """Carrega a pagina que resolve o challenge, uma vez por origem."""
+        origem = _origem(warmup_url)
+        if self._origem == origem:
+            return
+        self._page.goto(warmup_url, wait_until="domcontentloaded")
+        self._page.wait_for_timeout(3000)
+        self._origem = origem
 
     def close(self) -> None:
         try:
@@ -89,8 +116,17 @@ class JinaRenderer:
             raise RuntimeError(f"JSON de ofertas truncado no render de {url}")
         return text[start : end + 1]
 
+    def fetch_bytes_in_page(self, url: str, warmup_url: str) -> bytes:
+        raise RuntimeError("renderer jina nao baixa imagens")
+
     def close(self) -> None:
         return None
+
+
+def _origem(url: str) -> str:
+    """Esquema + host, para saber se a pagina atual ja e do site certo."""
+    partes = urlsplit(url)
+    return f"{partes.scheme}://{partes.netloc}"
 
 
 def playwright_available() -> bool:

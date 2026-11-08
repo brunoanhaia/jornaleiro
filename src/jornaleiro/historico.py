@@ -88,8 +88,11 @@ def reindexar(data_dir: Path, db: Path) -> dict[str, int]:
 def registrar_dia(data_dir: Path, dia: date, db: Path) -> dict[str, int]:
     """Atualiza so o dia pedido (o `run` usa para nao reindexar a historia toda)."""
     with closing(abrir(db)) as conexao:
-        for tabela in ("precos", "coletas", "site_produtos"):
-            conexao.execute(f"DELETE FROM {tabela} WHERE dia = ?", (dia.isoformat(),))
+        # SQL literal (sem interpolar nome de tabela): sao so as tres tabelas do schema
+        parametros = (dia.isoformat(),)
+        conexao.execute("DELETE FROM precos WHERE dia = ?", parametros)
+        conexao.execute("DELETE FROM coletas WHERE dia = ?", parametros)
+        conexao.execute("DELETE FROM site_produtos WHERE dia = ?", parametros)
         contagens = _importar(conexao, data_dir, so_dia=dia)
         conexao.commit()
     return contagens

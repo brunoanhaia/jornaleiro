@@ -25,12 +25,13 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from typing import Self
 
 from dotenv import load_dotenv
 
-from . import comprimir, compose, historico, http, notify, precos, render, site
+from . import compose, comprimir, historico, http, notify, precos, render, site
 from .markets import ORDER, REGISTRY, examine, safe_fetch
-from .model import Asset, Context, MarketCfg, MarketResult, SP, describe_error
+from .model import SP, Asset, Context, MarketCfg, MarketResult, describe_error
 from .state import State
 
 DEFAULT_CONFIG = "config.toml"
@@ -97,7 +98,7 @@ class _Transcricao:
         self._arquivo: io.TextIOBase | None = None
         self._originais: tuple[io.TextIOBase, io.TextIOBase] | None = None
 
-    def __enter__(self) -> _Transcricao:
+    def __enter__(self) -> Self:
         self.caminho.parent.mkdir(parents=True, exist_ok=True)
         self._arquivo = self.caminho.open("a", encoding="utf-8")
         self._arquivo.write(f"\n==== execucao em {datetime.now(SP):%d/%m/%Y %H:%M:%S} ====\n")

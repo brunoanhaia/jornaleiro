@@ -6,6 +6,7 @@ import html as html_lib
 from datetime import date
 from pathlib import Path
 
+import httpx
 import pytest
 
 from jornaleiro.markets import assai, atacadao, covabra, examine, savegnago
@@ -28,6 +29,9 @@ class FakeRenderer:
 
     def fetch_json_in_page(self, url: str, warmup_url: str) -> str:
         return self.text
+
+    def fetch_bytes_in_page(self, url: str, warmup_url: str) -> bytes:
+        return b"img"
 
     def close(self) -> None:
         pass
@@ -115,6 +119,16 @@ class ImpervaRenderer(FakeRenderer):
         raise RuntimeError("challenge Imperva sem cookies da pagina")
 
 
+class BloqueadoRenderer(FakeRenderer):
+    """Renderer que recebe 403 tanto no JSON quanto na pagina de ofertas."""
+
+    def fetch_json_in_page(self, url: str, warmup_url: str) -> str:
+        raise RuntimeError("HTTP 403")
+
+    def get_text(self, url: str) -> str:
+        raise RuntimeError("HTTP 403")
+
+
 class RecordingRenderer(FakeRenderer):
     def __init__(self, text: str) -> None:
         super().__init__(text)
@@ -123,6 +137,29 @@ class RecordingRenderer(FakeRenderer):
     def fetch_json_in_page(self, url: str, warmup_url: str) -> str:
         self.requested.append(url)
         return self.text
+
+
+class ImagemNoRenderer(RecordingRenderer):
+    """Imagem so sai pelo navegador (HTTP direto bloqueado)."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.imagens: list[str] = []
+
+    def fetch_bytes_in_page(self, url: str, warmup_url: str) -> bytes:
+        self.imagens.append(url)
+        return b"img-do-renderer"
+
+
+class ImagemBloqueada(RecordingRenderer):
+    def fetch_bytes_in_page(self, url: str, warmup_url: str) -> bytes:
+        raise RuntimeError("HTTP 403")
+
+
+def erro_403(url: str, **kwargs) -> bytes:
+    request = httpx.Request("GET", url)
+    response = httpx.Response(403, request=request)
+    raise httpx.HTTPStatusError("HTTP 403", request=request, response=response)
 
 
 def test_assai_pede_o_json_sem_cache_do_cdn() -> None:
@@ -142,6 +179,7 @@ def test_assai_cai_para_o_html_quando_o_json_falha(monkeypatch: pytest.MonkeyPat
         'campanha-173705-cluster-883-pagina-1.jpeg">'
     )
     ctx = Context(renderer=ImpervaRenderer(page), today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai, "_json_direto", lambda cfg: (_ for _ in ()).throw(RuntimeError("HTTP 403")))
     monkeypatch.setattr(assai.http, "get_bytes", lambda url, **kwargs: f"img:{url}".encode())
 
     result = assai.fetch(ctx, make_assai_cfg())
@@ -151,6 +189,75 @@ def test_assai_cai_para_o_html_quando_o_json_falha(monkeypatch: pytest.MonkeyPat
         "https://d2q57q7k4hzryv.cloudfront.net/RPA/v3/173705/campanha-173705-cluster-883-pagina-1.jpeg"
     ]
     assert result.note is not None and "challenge Imperva" in result.note
+
+
+def test_assai_usa_json_direto_quando_renderer_da_403(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = Context(renderer=BloqueadoRenderer(""), today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai, "_json_direto", lambda cfg: ASSAI_JSON)
+
+    pages, validity = assai._from_json(ctx, make_assai_cfg())
+
+    assert len(pages) == 8
+    assert validity == "Preços válidos para 15/10/2026"
+
+
+def test_assai_usa_html_direto_quando_renderer_da_403(monkeypatch: pytest.MonkeyPatch) -> None:
+    page = (
+        '<img src="https://d2q57q7k4hzryv.cloudfront.net/RPA/v3/173705/'
+        'campanha-173705-cluster-883-pagina-1.jpeg">'
+    )
+    ctx = Context(renderer=BloqueadoRenderer(""), today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai, "_json_direto", lambda cfg: (_ for _ in ()).throw(RuntimeError("HTTP 403")))
+    monkeypatch.setattr(assai, "_html_direto", lambda cfg: page)
+    monkeypatch.setattr(assai.http, "get_bytes", lambda url, **kwargs: f"img:{url}".encode())
+
+    result = assai.fetch(ctx, make_assai_cfg())
+
+    assert result.status == "ok"
+    assert result.note is not None and "403" in result.note
+
+
+def test_assai_erro_mostra_json_e_html_quando_as_duas_fontes_falham(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = Context(renderer=BloqueadoRenderer(""), today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai, "_json_direto", lambda cfg: (_ for _ in ()).throw(RuntimeError("HTTP 403")))
+    monkeypatch.setattr(assai, "_html_direto", lambda cfg: (_ for _ in ()).throw(RuntimeError("HTTP 403")))
+
+    result = assai.fetch(ctx, make_assai_cfg())
+
+    assert result.status == "failed"
+    assert "json:" in result.error and "html:" in result.error
+
+
+def test_assai_baixa_imagem_pelo_navegador_quando_http_da_403(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Imagem protegida (Imperva) pode responder so na sessao do Chromium."""
+    renderer = ImagemNoRenderer(ASSAI_JSON)
+    ctx = Context(renderer=renderer, today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai.http, "get_bytes", erro_403)
+
+    result = assai.fetch(ctx, make_assai_cfg())
+
+    assert result.status == "ok"
+    assert [asset.content for asset in result.assets] == [b"img-do-renderer"] * len(result.assets)
+    assert renderer.imagens == [asset.url for asset in result.assets]
+
+
+def test_assai_erro_de_imagem_mostra_url_e_as_duas_tentativas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    renderer = ImagemBloqueada(ASSAI_JSON)
+    ctx = Context(renderer=renderer, today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai.http, "get_bytes", erro_403)
+
+    result = assai.fetch(ctx, make_assai_cfg())
+
+    assert result.status == "failed"
+    assert result.error.startswith("https://")
+    assert "http: HTTP 403" in result.error
+    assert "renderer: RuntimeError: HTTP 403" in result.error
 
 
 # ------------------------------------------------------------------------ Atacadao

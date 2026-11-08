@@ -10,23 +10,28 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import date, datetime
+from datetime import date
 from urllib.parse import urljoin
 
 from .. import http
-from ..model import Asset, Context, MarketCfg, MarketResult, describe_error
+from ..model import Asset, Context, MarketCfg, MarketResult, data_br, describe_error
 
 KEY = "assai"
 LABEL = "Assaí Atacadista"
 
 MAX_OFFERS = 3
-_DATE_FORMAT = "%d/%m/%Y"
-_IMAGE_HEADERS = {"Accept": "image/jpeg,image/webp,*/*"}
+_JSON_HEADERS = {"Accept": "application/json,text/plain,*/*", "Referer": "https://www.assai.com.br/"}
+_HTML_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Referer": "https://www.assai.com.br/",
+}
+_IMAGE_HEADERS = {"Accept": "image/jpeg,image/webp,*/*", "Referer": "https://www.assai.com.br/"}
 _CLOUDFRONT = re.compile(r"https://[^\"'\s]*cloudfront\.net/RPA/[^\"'\s]*\.jpe?g")
 
 
 def fetch(ctx: Context, cfg: MarketCfg) -> MarketResult:
     json_error: BaseException | None = None
+    html_error: BaseException | None = None
     pages: list[str] = []
     validity: str | None = None
 
@@ -37,7 +42,10 @@ def fetch(ctx: Context, cfg: MarketCfg) -> MarketResult:
 
     note: str | None = None
     if not pages and json_error is not None:
-        pages = _from_page(ctx.renderer.get_text(cfg.offers_page), cfg.max_paginas)
+        try:
+            pages = _from_page(_offers_html(ctx, cfg), cfg.max_paginas)
+        except Exception as exc:  # noqa: BLE001 - erro vai para o resumo
+            html_error = exc
         if pages:
             note = f"paginas extraidas do HTML da pagina de ofertas ({describe_error(json_error)})"
 
@@ -45,24 +53,43 @@ def fetch(ctx: Context, cfg: MarketCfg) -> MarketResult:
         error = f"nenhuma oferta vigente para loja eid={cfg.eid}/nid={cfg.nid}"
         if json_error is not None:
             error = f"{error} (json: {describe_error(json_error)})"
+        if html_error is not None:
+            error = f"{error} (html: {describe_error(html_error)})"
         return MarketResult(key=KEY, label=LABEL, status="failed", error=error)
 
-    assets = [
-        Asset(
-            url=url,
-            content=http.get_bytes(url, headers=_IMAGE_HEADERS),
-            kind="image",
-            suffix=".jpg",
-        )
-        for url in pages
-    ]
+    try:
+        assets = [
+            Asset(url=url, content=_baixar_imagem(ctx, cfg, url), kind="image", suffix=".jpg")
+            for url in pages
+        ]
+    except Exception as exc:  # noqa: BLE001 - erro de download vai para o resumo
+        return MarketResult(key=KEY, label=LABEL, status="failed", error=str(exc))
+
     return MarketResult(
         key=KEY, label=LABEL, status="ok", assets=assets, validity=validity, note=note
     )
 
 
+def _baixar_imagem(ctx: Context, cfg: MarketCfg, url: str) -> bytes:
+    """Baixa uma pagina do encarte por HTTP e, se bloquear, pelo navegador.
+
+    A URL no erro localiza o host do 403 (CloudFront ou `www.assai.com.br`). O segundo
+    caminho reaproveita os cookies/fingerprint do challenge ja resolvido pela pagina.
+    """
+    erros: list[str] = []
+    try:
+        return http.get_bytes(url, headers=_IMAGE_HEADERS)
+    except Exception as exc:  # noqa: BLE001 - tenta pelo renderizador
+        erros.append(f"http: {describe_error(exc)}")
+    try:
+        return ctx.renderer.fetch_bytes_in_page(url, cfg.offers_page)
+    except Exception as exc:  # noqa: BLE001 - as duas falhas vao para o resumo
+        erros.append(f"renderer: {describe_error(exc)}")
+    raise RuntimeError(f"{url} (" + "; ".join(erros) + ")")
+
+
 def _from_json(ctx: Context, cfg: MarketCfg) -> tuple[list[str], str | None]:
-    raw = ctx.renderer.fetch_json_in_page(_uncached(cfg.json_url), cfg.offers_page)
+    raw = _json_texto(ctx, cfg)
     data = json.loads(_slice_json(raw))
 
     offers = [
@@ -84,6 +111,54 @@ def _from_json(ctx: Context, cfg: MarketCfg) -> tuple[list[str], str | None]:
         if len(pages) >= cfg.max_paginas:
             break
     return pages, validity
+
+
+def _json_texto(ctx: Context, cfg: MarketCfg) -> str:
+    """Texto do JSON: renderizador (cookies/JS do Imperva) e, se falhar, HTTP direto.
+
+    O 403 do challenge costuma aparecer num dos dois caminhos; tentar o outro evita
+    perder a coleta quando o Chromium/Jina esta indisponivel ou bloqueado.
+    """
+    erros: list[str] = []
+    tentativas = (
+        ("renderer", lambda: ctx.renderer.fetch_json_in_page(_uncached(cfg.json_url), cfg.offers_page)),
+        ("http", lambda: _json_direto(cfg)),
+    )
+    for fonte, buscar in tentativas:
+        try:
+            raw = buscar()
+            _slice_json(raw)
+            return raw
+        except Exception as exc:  # noqa: BLE001 - tenta a proxima fonte
+            erros.append(f"{fonte}: {describe_error(exc)}")
+    raise RuntimeError("json de ofertas indisponivel (" + "; ".join(erros) + ")")
+
+
+def _json_direto(cfg: MarketCfg) -> str:
+    return http.get(_uncached(cfg.json_url), headers=_JSON_HEADERS).text
+
+
+def _offers_html(ctx: Context, cfg: MarketCfg) -> str:
+    """HTML da pagina de ofertas, tentando renderizador e depois HTTP direto."""
+    erros: list[str] = []
+    tentativas = (
+        ("renderer", lambda: ctx.renderer.get_text(cfg.offers_page)),
+        ("http", lambda: _html_direto(cfg)),
+    )
+    for fonte, buscar in tentativas:
+        try:
+            html = buscar()
+        except Exception as exc:  # noqa: BLE001 - tenta a proxima fonte
+            erros.append(f"{fonte}: {describe_error(exc)}")
+            continue
+        if _from_page(html, 1):
+            return html
+        erros.append(f"{fonte}: pagina sem links de encarte")
+    raise RuntimeError("pagina de ofertas indisponivel (" + "; ".join(erros) + ")")
+
+
+def _html_direto(cfg: MarketCfg) -> str:
+    return http.get(cfg.offers_page, headers=_HTML_HEADERS).text
 
 
 def _uncached(url: str) -> str:
@@ -119,8 +194,8 @@ def _is_vigente(offer: dict, cfg: MarketCfg, today: date) -> bool:
 
 def _interval(offer: dict) -> tuple[date | None, date | None]:
     try:
-        start = datetime.strptime(offer["start_date"], _DATE_FORMAT).date()
-        end = datetime.strptime(offer["end_date"], _DATE_FORMAT).date()
+        start = data_br(offer["start_date"])
+        end = data_br(offer["end_date"])
     except (KeyError, TypeError, ValueError):
         return None, None
     return start, end

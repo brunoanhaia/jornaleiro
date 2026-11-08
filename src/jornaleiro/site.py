@@ -18,11 +18,11 @@ from __future__ import annotations
 import csv
 import json
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from io import StringIO
 from pathlib import Path
-from typing import Callable
 from urllib.parse import urlsplit
 
 from . import http
@@ -171,7 +171,7 @@ class Site:
         if max_categorias:
             categorias = categorias[:max_categorias]
         produtos: list[Produto] = []
-        for indice, (categoria_id, nome) in enumerate(categorias, start=1):
+        for categoria_id, nome in categorias:
             da_categoria = self.produtos_da_categoria(categoria_id, nome)
             produtos.extend(da_categoria)
             if ao_progredir is not None:

@@ -21,7 +21,9 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
   `.venv/bin/python -m pytest tests/test_precos.py::test_nome -q`.
 - Os testes não acessam a rede (fixtures inline recortadas de respostas reais, renderer
   falso, `monkeypatch` de `http`); escreva testes novos no mesmo estilo.
-- Não há lint, formatador nem typecheck configurados; o pytest é a única verificação.
+- Não há lint, formatador nem typecheck configurados; o pytest é a única verificação
+  local. O Codacy roda o Prospector com `.prospector.yaml` (convenção D212: resumo na
+  primeira linha da docstring), então docstrings multilinha novas devem seguir D212.
 - Iterar na extração de preços sem rede: `.venv/bin/jornaleiro precos --dia AAAA-MM-DD`
   reprocessa os PDFs já baixados em `data/<dia>/`.
 - Debug: `.venv/bin/jornaleiro render <url>` imprime o texto renderizado;
@@ -79,9 +81,14 @@ relevante antes de mexer em parsers, compressão ou preços, e atualize-o junto.
 - `pamphlets` (jornal oficial do Examine) só existe no endpoint `site_graphql_jornal`
   (`www.crescevendas.com/graphql`); o catálogo usa `site_graphql` (`.../ecommerce/graphql`).
   Inverter os dois dá `Field 'pamphlets' doesn't exist on type 'Query'`.
-- Assaí: o JSON de ofertas está atrás do challenge Imperva — só responde dentro de uma
-  página já carregada (`renderer.fetch_json_in_page`), e a URL leva `?v=<timestamp>`
-  (`assai._uncached`) para escapar do CDN congelado por semanas.
+- Assaí: o JSON de ofertas está atrás do challenge Imperva — o caminho normal é dentro de
+  uma página já carregada (`renderer.fetch_json_in_page`), com fallback para HTTP direto do
+  JSON e da página de ofertas (`assai._json_texto`/`_offers_html`) quando o renderizador
+  recebe 403. A URL leva `?v=<timestamp>` (`assai._uncached`) para escapar do CDN congelado
+  por semanas. Se uma imagem der 403 no HTTP direto, `_baixar_imagem` tenta de novo pelo
+  navegador (`renderer.fetch_bytes_in_page`), reaproveitando cookies/fingerprint do
+  challenge. O erro final lista URL e as duas tentativas (`http:`/`renderer:`), para
+  diagnosticar um 403 sem log completo.
 - Atacadão: `validity` vem como meia-noite UTC com a data local do cliente — não converta
   fuso horário (a janela andaria um dia; ver docstring de `atacadao._bound`).
 - Atacadão: preços e nomes são lidos **por coordenadas** (`precos._MERCADOS_COLUNAS`).

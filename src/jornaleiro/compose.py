@@ -43,7 +43,7 @@ def build_pdf(result: MarketResult, pagina: tuple[float, float] | None = A4) -> 
             pending_images.append(asset.content)
         else:
             flush_images()
-            writer.append(_padronizar(PdfReader(BytesIO(asset.content)), pagina))
+            _anexar_padronizado(writer, PdfReader(BytesIO(asset.content)), pagina)
     flush_images()
 
     out = BytesIO()
@@ -51,12 +51,21 @@ def build_pdf(result: MarketResult, pagina: tuple[float, float] | None = A4) -> 
     return out.getvalue()
 
 
-def _padronizar(reader: PdfReader, pagina: tuple[float, float] | None) -> PdfReader:
-    """Escala e centraliza cada pagina no tamanho alvo (mantendo a proporcao)."""
+def _anexar_padronizado(
+    writer: PdfWriter, reader: PdfReader, pagina: tuple[float, float] | None
+) -> None:
+    """Anexa as paginas do reader ao writer e escala/centraliza no tamanho alvo.
+
+    A transformacao e aplicada **depois** do `append`: desde o pypdf 7,
+    `add_transformation`/`replace_contents` so funciona em paginas ja anexadas a um
+    `PdfWriter` (a versao antiga, direto no reader, virou `DeprecationError`).
+    """
+    inicio = len(writer.pages)
+    writer.append(reader)
     if not pagina:
-        return reader
+        return
     alvo_largura, alvo_altura = pagina
-    for page in reader.pages:
+    for page in writer.pages[inicio:]:
         largura = float(page.mediabox.width)
         altura = float(page.mediabox.height)
         if largura <= 0 or altura <= 0:
@@ -73,7 +82,6 @@ def _padronizar(reader: PdfReader, pagina: tuple[float, float] | None) -> PdfRea
         )
         page.mediabox.lower_left = (0, 0)
         page.mediabox.upper_right = (alvo_largura, alvo_altura)
-    return reader
 
 
 def page_count(pdf: bytes) -> int:

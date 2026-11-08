@@ -12,7 +12,7 @@ verdade.
 
 | Mercado | Fonte | Formato |
 |---|---|---|
-| Assaí (loja Rio Claro, `eid=24`/`nid=77`) | JSON `ofertas_assai.json` buscado **dentro** da página de ofertas (challenge Imperva) | JPEG por página |
+| Assaí (loja Rio Claro, `eid=24`/`nid=77`) | JSON `ofertas_assai.json` buscado **dentro** da página de ofertas (challenge Imperva), com fallback para HTTP direto (JSON, HTML e imagens) | JPEG por página |
 | Atacadão (loja 638, `rio-claro`) | API pública `api-middleware-flyer-services/api/v2/Store/city` → `urlFinalDocument` | PDF por folheto |
 | Covabra | HTML SSR de `/jornal-de-ofertas` → card da cidade → PDF no Google Drive | PDF |
 | Savegnago | `imagens.savegnagoonline.com.br/jornal-semanal-app/Rio_Claro.pdf` | PDF (maior validade impressa no encarte — o CDN segue servindo o encarte antigo depois de vencer) |

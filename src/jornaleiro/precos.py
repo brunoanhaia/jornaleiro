@@ -28,11 +28,13 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import sys
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from io import BytesIO, StringIO
+from itertools import pairwise
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -159,7 +161,7 @@ class Ocr:
     ld_library_path: str = ""
 
     @classmethod
-    def from_config(cls, secao: dict) -> "Ocr":
+    def from_config(cls, secao: dict) -> Ocr:
         return cls(
             ativo=bool(secao.get("ocr", True)),
             binario=str(secao.get("ocr_bin", "") or ""),
@@ -307,19 +309,22 @@ def _ocr_imagem(dados: bytes, ocr: Ocr) -> str:
     try:
         with Image.open(BytesIO(dados)) as imagem:
             imagem.convert("L").save(caminho, "PNG")
-        processo = subprocess.run(
+        # B603: o binario vem da config/instalacao local, nao de entrada do usuario
+        processo = subprocess.run(  # nosec B603
             [binario, str(caminho), "stdout", "-l", ocr.idioma, "--psm", str(ocr.psm)],
             env=ocr.ambiente(),
             capture_output=True,
             text=True,
             timeout=180,
+            check=False,
         )
         return processo.stdout
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[ocr] falha na imagem: {type(exc).__name__}: {exc}", file=sys.stderr)
         return ""
     finally:
-        caminho.unlink(missing_ok=True)
+        with suppress(FileNotFoundError):
+            caminho.unlink()
 
 
 def _extract_colunas_pdf(dados: bytes, textos: list[str], mercado: str) -> list[Preco]:
@@ -397,9 +402,7 @@ def _extract_colunas(frags: list[tuple[float, float, str]], mercado: str, pagina
 
 def _numero_de(texto: str) -> float | None:
     """Valor de `123,45` (aceita `R$` colado e espacos); `None` quando nao e preco."""
-    limpo = texto.strip(" -–—•*()[]").replace(" ", "")
-    if limpo.startswith("R$"):
-        limpo = limpo[2:]
+    limpo = texto.strip(" -–—•*()[]").replace(" ", "").removeprefix("R$")
     casamento = _NUMERO.fullmatch(limpo)
     if not casamento:
         return None
@@ -507,7 +510,7 @@ def _itens_da_pagina(
     for coluna in colunas:
         coluna.sort(key=lambda s: -s[1])
         atual = [coluna[0]]
-        for ante, slot in zip(coluna, coluna[1:]):
+        for ante, slot in pairwise(coluna):
             if ante[1] - slot[1] > _COLUNAS_GAP_MINIMO and not _vao_coberto(ante, slot, blocos):
                 itens.append(atual)
                 atual = []
@@ -546,7 +549,8 @@ def _melhor_item(
     Com `so_direita`, so aceita item cujo bloco de precos esta a direita do nome:
     sem esse corte o nome de um item rouba o preco do item anterior da mesma faixa.
     """
-    melhor = None
+    melhor_distancia: float | None = None
+    melhor_posicao = 0
     for posicao, item in enumerate(itens):
         cx, cy = _centro(item)
         if abs(y - cy) > _COLUNAS_JANELA_Y:
@@ -554,9 +558,10 @@ def _melhor_item(
         if so_direita and not 0 <= cx - x <= _COLUNAS_X_NOME:
             continue
         distancia = ((cx - x) * _COLUNAS_PESO_X) ** 2 + (y - cy) ** 2
-        if melhor is None or distancia < melhor[0]:
-            melhor = (distancia, posicao)
-    return None if melhor is None else melhor[1]
+        if melhor_distancia is None or distancia < melhor_distancia:
+            melhor_distancia = distancia
+            melhor_posicao = posicao
+    return melhor_posicao if melhor_distancia is not None else None
 
 
 def _nome_do_item(fragmentos: list[tuple[float, float, str]]) -> str:

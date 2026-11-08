@@ -146,7 +146,10 @@ def test_folhetos_ordem_e_url_absoluta(monkeypatch: pytest.MonkeyPatch) -> None:
         return FakeResponse(corpo)
 
     monkeypatch.setattr(site.http, "post_json", fake_post)
-    cliente = site.Site(origin="https://superexaminerc.crescevendas.com", pausa=0, token="abc123")
+    # B106: token ficticio do teste, nao e credencial real
+    cliente = site.Site(
+        origin="https://superexaminerc.crescevendas.com", pausa=0, token="abc123"  # nosec B106
+    )
 
     folhetos = cliente.folhetos()
 

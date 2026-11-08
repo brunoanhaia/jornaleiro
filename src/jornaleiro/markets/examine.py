@@ -244,7 +244,9 @@ def extract_caption(text: str) -> str | None:
     if meta:
         return html_lib.unescape(normalize(meta.group(1))) or None
 
-    title = re.search(r"^Title: (.*?)(?=\n(?:URL Source:|Markdown Content:))", text, re.S | re.M)
+    title = re.search(
+        r"^Title: (.*?)(?=\n(?:URL Source:|Markdown Content:))", text, re.DOTALL | re.MULTILINE
+    )
     if not title:
         return None
     caption = html_lib.unescape(normalize(title.group(1))).strip()
@@ -252,8 +254,7 @@ def extract_caption(text: str) -> str | None:
     index = caption.find(marker)
     if index >= 0:
         caption = caption[index + len(marker) :].strip()
-        if caption.endswith('"'):
-            caption = caption[:-1]
+        caption = caption.removesuffix('"')
     return caption.strip() or None
 
 
