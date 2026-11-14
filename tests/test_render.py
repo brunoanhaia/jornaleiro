@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import builtins
 import json
-from typing import Any
 
 import pytest
 
@@ -18,51 +17,25 @@ class RespostaFalsa:
         self.text = texto
 
 
-def proibe_import_playwright(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Faz o teste falhar se algo tentar importar playwright (probe/navegador)."""
-    import_real = builtins.__import__
-
-    def vigia(name: str, *args: Any, **kwargs: Any):
-        if "playwright" in name:
-            raise AssertionError(f"playwright nao deveria ser importado ({name})")
-        return import_real(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", vigia)
-
-
 def test_build_renderer_recusa_modo_desconhecido() -> None:
     with pytest.raises(ValueError, match="renderer invalido"):
         render.build_renderer("inexistente")
 
 
-def test_build_renderer_jina_nao_abre_navegador(monkeypatch: pytest.MonkeyPatch) -> None:
-    proibe_import_playwright(monkeypatch)
+def test_build_renderer_usa_o_jina(monkeypatch: pytest.MonkeyPatch) -> None:
 
-    renderer = render.build_renderer("jina")
+    import_real = builtins.__import__
 
-    assert isinstance(renderer, render.JinaRenderer)
-    assert renderer.name == "jina"
+    def vigia(name: str, *args, **kwargs):
+        assert "playwright" not in name, "o projeto nao deve importar playwright"
+        return import_real(name, *args, **kwargs)
 
+    monkeypatch.setattr(builtins, "__import__", vigia)
 
-def test_playwright_available_e_memoizado(monkeypatch: pytest.MonkeyPatch) -> None:
-    proibe_import_playwright(monkeypatch)
-
-    monkeypatch.setattr(render, "_PLAYWRIGHT_OK", False)
-    assert render.playwright_available() is False
-
-    monkeypatch.setattr(render, "_PLAYWRIGHT_OK", True)
-    assert render.playwright_available() is True
-
-
-def test_build_renderer_auto_cai_para_o_jina_sem_playwright(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    proibe_import_playwright(monkeypatch)
-    monkeypatch.setattr(render, "_PLAYWRIGHT_OK", False)
-
-    renderer = render.build_renderer("auto")
-
-    assert isinstance(renderer, render.JinaRenderer)
+    for modo in ("jina", "auto"):
+        renderer = render.build_renderer(modo)
+        assert isinstance(renderer, render.JinaRenderer)
+        assert renderer.name == "jina"
 
 
 def test_fetch_json_in_page_extrai_bloco_de_ofertas(monkeypatch: pytest.MonkeyPatch) -> None:

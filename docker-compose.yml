@@ -1,0 +1,27 @@
+services:
+  jornaleiro:
+    # imagem publicada pelo workflow `Imagem` (GHCR); `build: .` mantem o build
+    # local com a mesma tag (docker compose up -d --build)
+    image: ghcr.io/brunoanhaia/jornaleiro:latest
+    build: .
+    init: true
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    # o processo roda como `app` (uid 1000) na imagem, sem capabilities e sem
+    # rootfs gravavel: so `./data` (volume) e `/tmp` (tmpfs) sao gravaveis
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "jornaleiro", "serve", "--verificar"]
+      interval: ${JORNALEIRO_HEALTHCHECK_INTERVAL:-2m}
+      timeout: ${JORNALEIRO_HEALTHCHECK_TIMEOUT:-60s}
+      retries: ${JORNALEIRO_HEALTHCHECK_RETRIES:-2}
+      start_period: ${JORNALEIRO_HEALTHCHECK_START_PERIOD:-3m}

@@ -50,7 +50,8 @@ def test_pdf_com_conteudo_e_transformado_depois_de_anexar_ao_writer() -> None:
 
     paginas = PdfReader(BytesIO(pdf)).pages
     assert len(paginas) == 2
-    assert {tuple(round(float(valor)) for valor in pagina.mediabox[2:]) for pagina in paginas} == {A4}
+    caixas = {tuple(round(float(valor)) for valor in pagina.mediabox[2:]) for pagina in paginas}
+    assert caixas == {A4}
 
 
 def test_imagens_e_pdf_saem_todos_em_a4() -> None:
@@ -66,11 +67,13 @@ def test_imagens_e_pdf_saem_todos_em_a4() -> None:
 
     paginas = PdfReader(BytesIO(pdf)).pages
     assert len(paginas) == 4
-    assert {tuple(round(float(valor)) for valor in pagina.mediabox[2:]) for pagina in paginas} == {A4}
+    caixas = {tuple(round(float(valor)) for valor in pagina.mediabox[2:]) for pagina in paginas}
+    assert caixas == {A4}
 
 
 def test_padronizar_preserva_a_proporcao_da_pagina() -> None:
-    pdf = compose.build_pdf(resultado([Asset(url="a", content=pdf_com_pagina(600, 300), kind="pdf", suffix=".pdf")]))
+    asset = Asset(url="a", content=pdf_com_pagina(600, 300), kind="pdf", suffix=".pdf")
+    pdf = compose.build_pdf(resultado([asset]))
 
     pagina = PdfReader(BytesIO(pdf)).pages[0]
 
@@ -91,4 +94,5 @@ def test_write_result_limpa_brutos_da_coleta_anterior(tmp_path) -> None:
     um = resultado([Asset(url="a", content=jpeg(40, 40), kind="image", suffix=".jpg")])
     compose.write_result(um, tmp_path, DIA, None)
 
-    assert sorted(caminho.name for caminho in (tmp_path / "2026-10-15" / "raw").iterdir()) == ["x-1.jpg"]
+    brutos = tmp_path / "2026-10-15" / "raw"
+    assert sorted(caminho.name for caminho in brutos.iterdir()) == ["x-1.jpg"]

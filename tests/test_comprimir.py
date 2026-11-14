@@ -44,7 +44,8 @@ def test_modo_forte_rasteriza_em_a4_e_mantem_paginas() -> None:
 
     paginas = PdfReader(BytesIO(comprimido)).pages
     assert len(paginas) == 2
-    assert {tuple(round(float(valor)) for valor in pagina.mediabox[2:]) for pagina in paginas} == {(595, 842)}
+    caixas = {tuple(round(float(valor)) for valor in pagina.mediabox[2:]) for pagina in paginas}
+    assert caixas == {(595, 842)}
     assert stats.imagens == 2 and stats.achatadas == 2
     assert len(comprimido) < len(original)
 

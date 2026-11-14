@@ -35,6 +35,19 @@ def fetch(ctx: Context, cfg: MarketCfg) -> MarketResult:
             error=f"nenhum folheto vigente para {cfg.slug}",
         )
 
+    assets, included = _baixar_folhetos(flyers, cfg.max_bytes)
+    return MarketResult(
+        key=KEY,
+        label=LABEL,
+        status="ok",
+        assets=assets,
+        validity=_validade(included),
+        note="; ".join(flyer.get("name") or flyer.get("id", "") for flyer in included) or None,
+    )
+
+
+def _baixar_folhetos(flyers: list[dict], max_bytes: int) -> tuple[list[Asset], list[dict]]:
+    """Baixa os folhetos vigentes ate o teto de bytes; devolve os assets e os incluidos."""
     assets: list[Asset] = []
     included: list[dict] = []
     total = 0
@@ -43,27 +56,21 @@ def fetch(ctx: Context, cfg: MarketCfg) -> MarketResult:
         if not document:
             continue
         content = http.get_bytes(document)
-        if assets and total + len(content) > cfg.max_bytes:
+        if assets and total + len(content) > max_bytes:
             break
         total += len(content)
         assets.append(Asset(url=document, content=content, kind="pdf", suffix=".pdf"))
         included.append(flyer)
+    return assets, included
 
-    starts = [d for d in (_bound(flyer, "initial") for flyer in included) if d is not None]
-    ends = [d for d in (_bound(flyer, "final") for flyer in included) if d is not None]
-    validity = None
-    if starts and ends:
-        validity = f"{min(starts):%d/%m} a {max(ends):%d/%m}"
-    names = [flyer.get("name") or flyer.get("id", "") for flyer in included]
 
-    return MarketResult(
-        key=KEY,
-        label=LABEL,
-        status="ok",
-        assets=assets,
-        validity=validity,
-        note="; ".join(names) or None,
-    )
+def _validade(flyers: list[dict]) -> str | None:
+    """Janela `dd/mm a dd/mm` que cobre todos os folhetos baixados."""
+    starts = [d for d in (_bound(flyer, "initial") for flyer in flyers) if d is not None]
+    ends = [d for d in (_bound(flyer, "final") for flyer in flyers) if d is not None]
+    if not (starts and ends):
+        return None
+    return f"{min(starts):%d/%m} a {max(ends):%d/%m}"
 
 
 def _vigentes(flyers: list[dict], today: date) -> list[dict]:
