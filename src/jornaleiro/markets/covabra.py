@@ -16,7 +16,7 @@ DRIVE_DOWNLOAD = "https://drive.google.com/uc?export=download&id={file_id}"
 _DRIVE_ID = re.compile(r"uc\?export=download&id=([A-Za-z0-9_-]+)")
 
 
-def fetch(ctx: Context, cfg: MarketCfg) -> MarketResult:
+def fetch(_ctx: Context, cfg: MarketCfg) -> MarketResult:
     page = http.get(cfg.page_url).text
     unescaped = html_lib.unescape(page)
 
@@ -31,7 +31,9 @@ def fetch(ctx: Context, cfg: MarketCfg) -> MarketResult:
 
     content = _download(file_id)
     validity = _validity(unescaped, file_id, cfg.city)
-    asset = Asset(url=DRIVE_DOWNLOAD.format(file_id=file_id), content=content, kind="pdf", suffix=".pdf")
+    asset = Asset(
+        url=DRIVE_DOWNLOAD.format(file_id=file_id), content=content, kind="pdf", suffix=".pdf"
+    )
     return MarketResult(key=KEY, label=LABEL, status="ok", assets=[asset], validity=validity)
 
 

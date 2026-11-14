@@ -22,8 +22,8 @@ Medido nos encartes de 15/10/2026, ja com todas as paginas em A4:
         savegnago  3,56 MB ->  0,79 MB (-78%)
         examine    0,56 MB ->  0,22 MB (-61%)
 
-No modo `forte` a camada de texto se perde (a pagina vira imagem) - por isso a leitura de
-precos parte dos arquivos brutos em `data/<dia>/raw/`, que nunca passam por compressao.
+No modo `forte` a camada de texto se perde (a pagina vira imagem): o PDF final e para
+leitura no celular e para o Telegram, nao para extrair texto.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ import io
 from dataclasses import dataclass
 
 import img2pdf
+import pypdfium2 as pdfium
 from pikepdf import Name, ObjectStreamMode, Pdf, PdfImage
 from PIL import Image
 
@@ -46,8 +47,7 @@ class Compressao:
     qualidade: int = 60
     largura_max: int = 1400
     achatar_mascara: bool = True
-    # `forte`: cada pagina vira uma imagem (perde a camada de texto; os precos sao lidos
-    # dos arquivos brutos em data/<dia>/raw/, que nao passam por compressao)
+    # `forte`: cada pagina vira uma imagem (menor arquivo; sem camada de texto)
     rasterizar: bool = False
     dpi: int = 110
     pagina: tuple[float, float] | None = A4
@@ -93,8 +93,6 @@ def compress(pdf_bytes: bytes, opcoes: Compressao) -> tuple[bytes, Resultado]:
 
 def _rasterizar(pdf_bytes: bytes, opcoes: Compressao) -> tuple[bytes, Resultado]:
     """Compressao forte: cada pagina vira um JPEG (A4), como fazem os compressores comerciais."""
-    import pypdfium2 as pdfium
-
     documento = pdfium.PdfDocument(io.BytesIO(pdf_bytes))
     paginas: list[bytes] = []
     try:

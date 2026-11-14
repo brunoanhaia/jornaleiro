@@ -68,7 +68,15 @@ def make_assai_cfg(max_paginas: int = 12, **overrides) -> MarketCfg:
     return MarketCfg(cfg)
 
 
-def test_assai_filtra_loja_e_vigencia() -> None:
+class RespostaTexto:
+    """Resposta minima de `http.get` (so o `.text`, como o codigo usa)."""
+
+    def __init__(self, texto: str) -> None:
+        self.text = texto
+
+
+def test_assai_filtra_loja_e_vigencia(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(assai.http, "get", lambda url, **kwargs: RespostaTexto(ASSAI_JSON))
     ctx = make_ctx(ASSAI_JSON)
     pages, validity = assai._from_json(ctx, make_assai_cfg())
 
@@ -85,7 +93,8 @@ def test_assai_filtra_loja_e_vigencia() -> None:
     ]
 
 
-def test_assai_respeita_teto_de_paginas() -> None:
+def test_assai_respeita_teto_de_paginas(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(assai.http, "get", lambda url, **kwargs: RespostaTexto(ASSAI_JSON))
     ctx = make_ctx(ASSAI_JSON)
     pages, _ = assai._from_json(ctx, make_assai_cfg(max_paginas=3))
 
@@ -162,15 +171,32 @@ def erro_403(url: str, **kwargs) -> bytes:
     raise httpx.HTTPStatusError("HTTP 403", request=request, response=response)
 
 
-def test_assai_pede_o_json_sem_cache_do_cdn() -> None:
+def test_assai_pede_o_json_sem_cache_do_cdn(monkeypatch: pytest.MonkeyPatch) -> None:
     """A URL sem query fica presa num objeto antigo do CDN (ofertas vencidas)."""
-    renderer = RecordingRenderer(ASSAI_JSON)
-    ctx = Context(renderer=renderer, today_sp=TODAY, state=State(Path("unused.json")))
+    pedidos: list[str] = []
+
+    def get_falso(url: str, **kwargs):
+        pedidos.append(url)
+        return RespostaTexto(ASSAI_JSON)
+
+    monkeypatch.setattr(assai.http, "get", get_falso)
+    ctx = make_ctx(ASSAI_JSON)
 
     assai._from_json(ctx, make_assai_cfg())
 
-    (url,) = renderer.requested
+    (url,) = pedidos
     assert url.startswith("https://www.assai.com.br/sites/default/files/static/ofertas_assai.json?v=")
+
+
+def test_assai_usa_http_direto_antes_do_renderizador(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HTTP e o caminho barato; o navegador so entra se o challenge responder 403."""
+    renderer = RecordingRenderer(ASSAI_JSON)
+    ctx = Context(renderer=renderer, today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai.http, "get", lambda url, **kwargs: RespostaTexto(ASSAI_JSON))
+
+    assai._from_json(ctx, make_assai_cfg())
+
+    assert not renderer.requested  # nem chegou no renderizador
 
 
 def test_assai_cai_para_o_html_quando_o_json_falha(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,6 +206,7 @@ def test_assai_cai_para_o_html_quando_o_json_falha(monkeypatch: pytest.MonkeyPat
     )
     ctx = Context(renderer=ImpervaRenderer(page), today_sp=TODAY, state=State(Path("unused.json")))
     monkeypatch.setattr(assai, "_json_direto", lambda cfg: (_ for _ in ()).throw(RuntimeError("HTTP 403")))
+    monkeypatch.setattr(assai, "_html_direto", lambda cfg: (_ for _ in ()).throw(RuntimeError("HTTP 403")))
     monkeypatch.setattr(assai.http, "get_bytes", lambda url, **kwargs: f"img:{url}".encode())
 
     result = assai.fetch(ctx, make_assai_cfg())
@@ -191,9 +218,9 @@ def test_assai_cai_para_o_html_quando_o_json_falha(monkeypatch: pytest.MonkeyPat
     assert result.note is not None and "challenge Imperva" in result.note
 
 
-def test_assai_usa_json_direto_quando_renderer_da_403(monkeypatch: pytest.MonkeyPatch) -> None:
-    ctx = Context(renderer=BloqueadoRenderer(""), today_sp=TODAY, state=State(Path("unused.json")))
-    monkeypatch.setattr(assai, "_json_direto", lambda cfg: ASSAI_JSON)
+def test_assai_usa_o_renderizador_quando_o_http_da_403(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = make_ctx(ASSAI_JSON)
+    monkeypatch.setattr(assai, "_json_direto", lambda cfg: (_ for _ in ()).throw(RuntimeError("HTTP 403")))
 
     pages, validity = assai._from_json(ctx, make_assai_cfg())
 
@@ -236,6 +263,7 @@ def test_assai_baixa_imagem_pelo_navegador_quando_http_da_403(
     """Imagem protegida (Imperva) pode responder so na sessao do Chromium."""
     renderer = ImagemNoRenderer(ASSAI_JSON)
     ctx = Context(renderer=renderer, today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai, "_json_direto", lambda cfg: ASSAI_JSON)
     monkeypatch.setattr(assai.http, "get_bytes", erro_403)
 
     result = assai.fetch(ctx, make_assai_cfg())
@@ -250,6 +278,7 @@ def test_assai_erro_de_imagem_mostra_url_e_as_duas_tentativas(
 ) -> None:
     renderer = ImagemBloqueada(ASSAI_JSON)
     ctx = Context(renderer=renderer, today_sp=TODAY, state=State(Path("unused.json")))
+    monkeypatch.setattr(assai, "_json_direto", lambda cfg: ASSAI_JSON)
     monkeypatch.setattr(assai.http, "get_bytes", erro_403)
 
     result = assai.fetch(ctx, make_assai_cfg())
@@ -480,7 +509,8 @@ def test_examine_legenda_e_imagem_full_size() -> None:
     assert examine.image_urls(EXAMINE_JINA) == [FULL_SIZE]
 
 
-def test_examine_html_do_playwright() -> None:
+def test_examine_html_do_post_renderizado() -> None:
+    """Amostra real do HTML pos-JS do post (entidades HTML no texto da legenda)."""
     caption = examine.extract_caption(EXAMINE_PLAYWRIGHT)
 
     assert caption is not None
