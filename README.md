@@ -2,11 +2,10 @@
 
 Coleta os encartes ("jornais de ofertas") vigentes dos mercados **Assaí, Atacadão,
 Covabra, Savegnago e Examine** na cidade de Rio Claro/SP, compila **um PDF por
-mercado**, lê os preços publicados nos encartes (e no catálogo do site do Examine)
-e envia os PDFs e os CSVs por Telegram com uma mensagem-resumo. A execução é manual
-(`jornaleiro run`) ou agendada no GitHub Actions, duas vezes por dia (07:00 e 19:00, ver
-*Coleta diária no GitHub Actions*); o SQLite é um índice derivado dos CSVs, não a fonte de
-verdade.
+mercado** e envia os PDFs por Telegram com uma mensagem-resumo. A execução é manual
+(`jornaleiro run`) ou contínua em container (`jornaleiro serve`, com agendador interno,
+duas vezes por dia — 07:00 e 19:00 — ver *Execução contínua em container*). O programa
+não extrai texto nem preço dos encartes: o que sai é o PDF inteiro.
 
 ## Fontes
 
@@ -20,9 +19,22 @@ verdade.
 
 ## Requisitos
 
-- Python 3.11+
-- Chromium do Playwright (opcional: sem ele o programa usa o renderizador `jina`)
-- Um bot do Telegram e o `chat_id` de destino
+- Python 3.11+, um bot do Telegram e o `chat_id` de destino
+- Nada de navegador: as páginas que precisam de JS vão pelo `r.jina.ai` (HTTP)
+
+Dependências de execução (todas usadas, nenhuma só de conveniência):
+
+| Pacote | Versão mínima | Para quê |
+|---|---|---|
+| `httpx` | 0.28.1 | cliente HTTP dos mercados, do `r.jina.ai` e da API do Telegram |
+| `pypdf` | 7.1.0 | ler/remontar os PDFs dos encartes (validade do Savegnago, páginas em A4) |
+| `pypdfium2` | 5.15.2 | rasterizar as páginas no modo `forte` da compressão |
+| `img2pdf` | 0.6.3 | montar página A4 a partir de imagem e layout das páginas de PDF |
+| `pikepdf` | 10.18.1 | reencodar JPEG/achatar máscara CMYK ao comprimir |
+| `pillow` | 13.0.0 | medir imagem e converter para JPEG na compressão; `examine-probe` |
+| `python-dotenv` | 1.2.4 | carregar o `.env` em todo comando |
+
+Dev: `pytest` (9.2+) — os testes não pedem nada além disso e não acessam a rede.
 
 ## Instalação
 
@@ -30,12 +42,13 @@ verdade.
 cd ~/workspace/jornaleiro
 python3 -m venv .venv                     # se faltar ensurepip: apt install python3-venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/playwright install --only-shell chromium   # so o headless shell (modo usado)
-sudo .venv/bin/playwright install-deps chromium     # bibliotecas de sistema do Chromium
 ```
 
-Se a máquina não tiver as bibliotecas de sistema e você não tiver root, veja
-*Renderizador* abaixo (dá para rodar com `--renderer jina`, sem Chromium).
+O caminho de produção não precisa de nada disso: a imagem publicada no GHCR já tem tudo
+(`docker compose pull`) e monta o `data/` da máquina no container (uid 1000, o usuário
+`app` da imagem) — **198 MB em disco / 74 MB de pull**, sem Chromium. Se o `data/` não for
+gravável por esse uid, o run falha; `sudo chown -R 1000:1000 data` resolve (ou fixe
+`user:` no `docker-compose.yml`).
 
 ## Bot do Telegram
 
@@ -78,34 +91,15 @@ conta do clube Examine — com ele o encarte do Examine vem do jornal oficial do
 ```
 
 ```bash
-# le os precos dos PDFs que ja estao em data/<dia>/ (nao baixa nada)
-.venv/bin/jornaleiro precos
-.venv/bin/jornaleiro precos --only atacadao --json    # imprime os precos no stdout
-.venv/bin/jornaleiro precos --dia 2026-10-15          # reprocessa um dia anterior
-
-# le o catalogo do site do Examine (preco estruturado, sem OCR)
-.venv/bin/jornaleiro site-precos
-.venv/bin/jornaleiro site-precos --max-categorias 2   # varredura parcial
+# agenda interna (container): roda nos horarios do config.toml e atualiza data/agenda.json
+.venv/bin/jornaleiro serve
+.venv/bin/jornaleiro serve --agora --no-send   # uma execucao agora, sem Telegram
+.venv/bin/jornaleiro serve --verificar         # healthcheck: 0 = agenda em dia, 1 = parada
 ```
 
-```bash
-# retencao: apaga coletas de data/ mais velhas que 30 dias (--dry-run so lista)
-.venv/bin/jornaleiro limpar --dias 30
-.venv/bin/jornaleiro limpar --dias 30 --dry-run
-```
-
-```bash
-# historico em SQLite, derivado dos CSVs (banco em data/historico.sqlite)
-.venv/bin/jornaleiro historico                    # o que ja tem no banco
-.venv/bin/jornaleiro historico --reindex          # reconstroi o banco a partir dos CSVs
-.venv/bin/jornaleiro historico --produto arroz    # leituras recentes do produto
-.venv/bin/jornaleiro historico --quedas           # variacoes de preco (menor do dia)
-```
-
-Opções de `run`: `--only k1,k2`, `--renderer auto|playwright|jina`, `--no-send`,
-`--sem-comprimir`, `--sem-ocr`, `--sem-precos` (só os jornais: não lê nem envia preços),
-`--forcar` (reenvia mesmo com o encarte idêntico ao último envio), `--data-dir DIR`,
-`--config ARQUIVO`. Mercados e URLs ficam em `config.toml`, procurado
+Opções de `run`: `--only k1,k2`, `--renderer auto|jina`, `--no-send`,
+`--sem-comprimir`, `--forcar` (reenvia mesmo com o encarte idêntico ao último envio),
+`--data-dir DIR`, `--config ARQUIVO`. Mercados e URLs ficam em `config.toml`, procurado
 nesta ordem: `--config`, `$JORNALEIRO_CONFIG`, `./config.toml` e a raiz do repositório; um
 `data_dir` relativo no config é resolvido ao lado dele. Tudo roda igual como
 `python -m jornaleiro ...`.
@@ -120,78 +114,49 @@ selecionados falharem (ou nenhum PDF sair), `2` para erro de configuração
 (token/chat_id ausente ou mercado desconhecido).
 
 Antes de enviar, o `run` confere o `data/state.json`: se os brutos de um mercado têm o
-mesmo sha256 do último envio (`mercados.<chave>`), o PDF/CSV daquele mercado é pulado e a
+mesmo sha256 do último envio (`mercados.<chave>`), o PDF daquele mercado é pulado e a
 linha do resumo ganha `AVISO: nao reenviado: igual ao de 15/10` (`--forcar` reenvia de
-qualquer jeito). Outros avisos do resumo: `encarte vencido em DD/MM` (a validade
-terminou antes de hoje) e `queda suspeita de precos` (menos da metade dos preços da
-última leitura). Nenhum aviso aborta o run.
+qualquer jeito). O outro aviso é `encarte vencido em DD/MM` (a validade terminou antes de
+hoje). Nenhum aviso aborta o run.
 
-A mensagem enviada traz uma linha por mercado — com o tamanho, a validade e os preços
-lidos — e o resumo de falhas:
+A mensagem enviada traz uma linha por mercado — com o tamanho e a validade — e o resumo
+de falhas:
 
 ```
 Encartes Rio Claro - 15/10/2026
-Assaí Atacadista - 8 pags - Preços válidos para 15/10/2026 | 12 itens/16 precos (OCR)
-Atacadão - 6 folhetos - 12/10 a 19/10 | 256 itens/573 precos
-Covabra - 4 pags - 15/10 - 21/10 | 169 itens/176 precos
-Savegnago - 4 pags - válido até 17/10/2026 | 180 itens/261 precos
-Examine - 1 pag - 15/10 a 18/10/2026 | OCR nao leu nenhum preco
+Assaí Atacadista - 8 pags - Preços válidos para 15/10/2026
+Atacadão - 6 folhetos - 12/10 a 19/10
+Covabra - 4 pags - 15/10 - 21/10
+Savegnago - 4 pags - válido até 17/10/2026
+Examine - 1 pag - 15/10 a 18/10/2026
 Falhas: nenhuma
-
-Quedas recentes (menor preco do item por dia):
--0% atacadao: Toalha de Papel Dadu Branca - Interfolha Pacote com 1000 unidades R$ 19.98 (15/10) -> R$ 19.90
 ```
 
-(contagens remedidas em 18/10/2026, com os encartes de 15/10; o bloco de quedas aparece
-quando há histórico — ver "Histórico de preços" — e vale entre as duas últimas leituras
-de cada produto na janela de 30 dias.)
-
 Cada PDF vai como documento com a legenda `<mercado> - <validade> - <n> pags`
-(ou `<n> folhetos`, no caso do Atacadão); logo depois de cada PDF vai o CSV da leitura
-de preços daquele mercado, com a legenda `<mercado> - <itens> itens/<precos> precos`.
-Mercados sem preço lido (hoje o Examine) só mandam o PDF. Para enviar apenas os PDFs,
-ponha `enviar = false` em `[precos]`. Limites respeitados: documento ≤ 50 MB (o
+(ou `<n> folhetos`, no caso do Atacadão). Limites respeitados: documento ≤ 50 MB (o
 Atacadão para de acumular folhetos ao atingir `max_bytes`, 40 MiB, no `config.toml`)
 e legenda ≤ 1024 caracteres.
 
 ## Renderizador
 
-`renderer = "auto"` (o padrão) testa o Chromium do Playwright e, se ele não subir,
-usa o **[r.jina.ai](https://r.jina.ai)** — um serviço que devolve o DOM já renderizado.
-Os dois caminhos servem para as mesmas páginas; `--renderer playwright` e
-`--renderer jina` forçam um deles. O renderizador é usado apenas pelo Assaí e pelo
-Examine: os outros três mercados são HTTP simples.
+Não há navegador no projeto. Os mercados usam HTTP direto e, quando a página precisa de
+JavaScript (ou responde ao cliente simples com o challenge Imperva, caso do Assaí), o
+fallback é o **[r.jina.ai](https://r.jina.ai)**, que renderiza do lado do servidor e
+devolve o DOM em markdown — uma chamada HTTP comum.
 
-### Sem as bibliotecas de sistema do Chromium
+`renderer = "auto"` (o padrão) e `--renderer jina` fazem a mesma coisa: usam o jina.
+`JINA_API_KEY` no `.env` é opcional (aumenta o limite do serviço). Quem usa o
+renderizador é só o Assaí (JSON de ofertas e, se o HTTP der 403, a página) e o Examine
+**sem** `EXAMINE_TOKEN` (o post do Instagram); os outros três mercados são HTTP simples.
 
-O Chromium precisa de bibliotecas que não vêm com o Playwright (`libglib-2.0`,
-`libnss3`, `libatk`, `libgbm`, fontconfig…). O caminho normal é
-`sudo .venv/bin/playwright install-deps chromium`. Sem root, dá para extrair os
-pacotes num diretório do usuário e apontar as variáveis de ambiente:
+Medido em 14/11/2026: o HTTP direto do Assaí devolveu `200` (108 KB, `Last-Modified` do
+dia) e as imagens vieram sem challenge, então o caminho normal nem chega no jina; o jina
+também serviu o JSON do Assaí (108 KB com `ofertas`) e a legenda do post do Instagram
+quando exercitado como fallback. A ordem das tentativas no Assaí é **HTTP primeiro,
+renderizador depois**.
 
-```bash
-# lista de dependências que o Playwright pediria
-.venv/bin/playwright install-deps --dry-run chromium
-
-# baixa (apt-get download não precisa de root) e extrai para um prefixo local
-mkdir -p ~/tmp/debs ~/.local/share/chromium-libs
-cd ~/tmp/debs && apt-get download <pacotes...>
-for f in ~/tmp/debs/*.deb; do dpkg-deb -x "$f" ~/.local/share/chromium-libs; done
-# copie só as .so que o sistema não tem para ~/.local/share/crlibs
-```
-
-O Chromium também aborta com `SkFontMgr_FontConfigInterface: Not implemented` quando
-não existe `/etc/fonts/fonts.conf`; extraia `fontconfig-config` e um pacote de fontes
-(`fonts-liberation`) e aponte um `fonts.conf` mínimo referenciando o diretório de fontes
-extraído. No fim, a execução fica assim:
-
-```bash
-LD_LIBRARY_PATH=$HOME/.local/share/crlibs \
-FONTCONFIG_FILE=$HOME/.local/share/chromium-etc/etc/fonts/local.conf \
-.venv/bin/jornaleiro run
-```
-
-Sem essa ginástica, use `--renderer jina` (ou deixe o `auto` cair nele sozinho).
+Com o navegador fora, a imagem do container caiu de ~410 MB para ~80 MB de transferência
+e o run não gasta mais os 20–30 s de subir o Chromium no Assaí.
 
 ## Compressão e tamanho das páginas
 
@@ -208,81 +173,9 @@ alturas diferentes.
 | `padrao` | reencoda as imagens embutidas, achata máscara suave no branco, `largura_max` 1400 | Assaí 8,92→1,62 MB, Atacadão 26,45→13,4 MB, Covabra →2,04 MB (−34% a −82%) |
 
 `dpi = 110` no modo forte deixa mais ~15% menor (texto um pouco mais suave); `--sem-comprimir`
-desliga tudo. O modo `forte` perde a camada de texto (a página vira imagem), então a leitura
-de preços parte dos brutos em `data/<dia>/raw/` — que também são limpos a cada coleta para
-não misturar folhetos de execuções anteriores.
-
-## Preços dos encartes
-
-`jornaleiro precos` lê os preços dos PDFs já baixados em `data/<dia>/` (não baixa nada de
-novo) e grava `data/<dia>/precos/<mercado>.csv` e `<mercado>.json`, com as colunas
-`mercado;pagina;produto;preco;ordem;tipo` (o CSV sai com BOM, `utf-8-sig`, para abrir
-direto no Excel pt-BR).
-
-| Mercado | Como o preço é lido | Resultado nos encartes de 15/10/2026 (medido em 18/10) |
-|---|---|---|
-| Atacadão | camada de texto do PDF, **por coordenadas** (abaixo) | 573 preços (256 itens) |
-| Savegnago | camada de texto do PDF | 261 preços (180 itens) |
-| Covabra | camada de texto do PDF | 176 preços (169 itens) |
-| Assaí | **OCR** (encarte em JPEG) | 16 preços (12 itens) |
-| Examine | **catálogo do site** (GraphQL) | 11.124 produtos com preço (4.408 com desconto) |
-
-No Atacadão o PDF desenha cada item como um card solto — nome à esquerda, até três
-preços empilhados à direita — e a ordem do fluxo de texto embaralha preço e nome entre
-itens vizinhos (no hortifruti, um produto saía com o preço do outro). Desde 18/10/2026
-esse mercado é lido **por coordenadas** (`x, y` de cada fragmento): cada `R$` vira um
-slot de preço, slots da mesma coluna x formam um item e cada fragmento de nome vai para
-o item à sua direita. Um vão grande entre dois preços da mesma coluna pode ser fronteira
-de cards ou o preço do app em cima do cheio com o nome no meio; quem decide é o bloco de
-nome do card — cobrindo boa parte do vão, os preços ficam juntos; sem cobrir, o item
-fecha. A linha riscada (`de: R$ 9,99 por:`) é descartada inteira, com o rótulo junto.
-Com isso, os preços com `tipo` identificado subiram de 428 (de 554 lidos) para 459 (de
-573) nos encartes de 15/10/2026.
-
-A leitura casa a descrição impressa com os preços do item (no Atacadão, por coordenadas;
-nos demais mercados, a descrição vale para os preços que vêm logo depois dela no fluxo de
-texto); `ordem` é a posição do preço dentro do item, porque o
-encarte publica vários preços por produto (o Atacadão traz varejo/atacado, app e cartão;
-o Savegnago traz "de/por"). A coluna `tipo` tenta dizer o **papel** de cada preço por
-heurística de valor — o encarte publica do maior para o menor: no Atacadão, bloco de 3
-preços vira `varejo/atacado`, `app`, `app/cartao` (bloco de 2, `varejo/atacado` +
-`app`); no Savegnago/Covabra, bloco de 2 vira `cheio` + `clube`; blocos de tamanho
-inesperado (itens fundidos pela ordem de leitura do PDF) e mercados sem padrão
-conhecido ficam com `tipo` vazio. É inferência medida, não rótulo lido do PDF.
-
-### OCR dos encartes em imagem
-
-`[precos]` no `config.toml` controla o OCR (`ocr = true`), o binário, o `tessdata`, o
-idioma e o `psm` (12 = texto esparso, que foi o melhor medido). O tesseract **não** vem
-com o Playwright; nesta máquina ele foi extraído dos `.deb` para
-`~/.local/share/tesseract` com as bibliotecas em `~/.local/share/tesslibs` (o deps do
-Chromium não serve para ele), e é isso que `ocr_ld_library_path` aponta. Se o binário
-não existir, `jornaleiro run` e `jornaleiro precos` seguem funcionando e o resumo diz
-`precos: OCR indisponivel`. `--sem-ocr` desliga o OCR pontualmente.
-
-Limitações conhecidas, todas verificadas nos encartes de hoje: no Atacadão/Covabra/
-Savegnago o nome vem do texto impresso (quando o próprio PDF perde um glifo, sai torto
-— ex.: `Arroz po 1` em vez de `Arroz tipo 1`); no Atacadão a leitura por coordenadas
-acabou com a troca de preço entre itens vizinhos do hortifruti (a leitura por fluxo de
-texto dava `Cebola` com o preço da cenoura e colava o `de: R$` riscado no nome) — o que
-sobra são os itens-caixa (`CAIXA/SACO COM 19KG`) do hortifruti, cujo preço às vezes cai
-no item de cima ou fica sem descrição (9 preços sem `produto` nos encartes de 15/10);
-`tipo` é heurística de valor, não rótulo lido; no Assaí o OCR
-acha poucos preços e as descrições saem truncadas/ruidosas (só as linhas com palavra
-real e pouco lixo entram); o encarte em imagem do Examine não é lido por OCR (é arte
-com preço estilizado) — para esse mercado a leitura vem do catálogo do site, abaixo.
-Os PDFs continuam no `data/<dia>/` para conferência.
-
-`jornaleiro run` também lê os preços do PDF que acabou de gerar, grava os mesmos
-`data/<dia>/precos/<mercado>.csv|json`, põe a contagem na mensagem do Telegram
-(uma linha por mercado, ex.: `| 256 itens/573 precos`) e manda o CSV como documento
-logo depois do PDF do mercado. O marcador de fonte aparece quando a leitura não veio
-da camada de texto pura: `(OCR)`, `(texto+OCR)` ou `(OCR indisponivel em parte)` (um
-arquivo do mercado ficou sem OCR); se a leitura falhar, a linha vira
-`precos: falha (motivo)` e o PDF do mercado ainda é enviado. `enviar = false` em
-`[precos]` desliga só o envio dos CSVs. `ler = false` desliga a leitura de preços no
-`run` (só coleta os jornais; o resumo traz a validade, sem contagem de preços) — o
-subcomando `jornaleiro precos` continua lendo sob demanda.
+desliga tudo. O modo `forte` perde a camada de texto (a página vira imagem) — irrelevante
+aqui, porque o PDF é para leitura, não para extrair dados. Os brutos de `data/<dia>/raw/`
+são limpos a cada coleta para não misturar folhetos de execuções anteriores.
 
 ### Encarte oficial do Examine (jornal do site)
 
@@ -294,57 +187,8 @@ essas páginas, com os títulos no campo `note`. Sem token — ou se a consulta 
 mercado cai no caminho antigo do Instagram, que continua no código.
 
 `pamphlets` só existe no endpoint principal (`site_graphql_jornal`, padrão
-`www.crescevendas.com/graphql`); o catálogo usa o do e-commerce (`site_graphql`). Trocar
-os dois de lugar dá `Field 'pamphlets' doesn't exist on type 'Query'` — já aconteceu.
-
-### Preços do site do Examine (GraphQL)
-
-O site `superexaminerc.crescevendas.com` é um Next.js que conversa com a API GraphQL
-`www.crescevendas.com/ecommerce/graphql` (cliente resolvido pelo `Origin` do tenant; a
-consulta `app_version` responde `client_id=377, name="Examine"`). `jornaleiro site-precos`
-varre `categories` e `products(categoryId, after)` — as mesmas consultas que o site usa —
-e grava `data/<dia>/precos/examine.csv|json` com `id;categoria;produto;preco;pesavel;unidade;estoque;descontos`.
-`--max-categorias N` limita a varredura (bom para teste). O campo `descontos` vem como
-`Tipo=valor`: `Aplicativo` é o preço com oferta ativada no app (valor em R$) e `Cashback`
-é fração do preço — a mesma distinção que o site faz ao exibir.
-
-Comparado com e sem `Authorization`, os preços e descontos são **idênticos** (verificado
-nos encartes de 15/10/2026): o token destrava o jornal, não preço extra. E este é
-**preço do site**, não o preço impresso no encarte da semana; por isso ele não substitui
-o PDF, mas é estruturado (nome, código, estoque, peso, descontos) e não depende de OCR.
-Em `jornaleiro run`, `[markets.examine] precos_site = true` faz a leitura de preços do
-Examine vir daqui (o CSV vai junto dos PDFs) e pula o OCR do encarte em imagem, que não
-lia nada.
-
-## Histórico de preços (SQLite)
-
-`jornaleiro historico` indexa os CSVs de `data/<dia>/precos/` num banco SQLite
-(`data/historico.sqlite`, caminho em `[historico] db` do `config.toml`); o banco **não**
-entra no git e é descartável — `--reindex` o reconstrói dos CSVs a qualquer momento:
-
-```bash
-.venv/bin/jornaleiro historico                    # precos/coletas/site no banco
-.venv/bin/jornaleiro historico --reindex          # reconstroi dos CSVs de data/
-.venv/bin/jornaleiro historico --produto "arroz"  # ultimas leituras do produto (trecho do nome)
-.venv/bin/jornaleiro historico --quedas --dias 30 # so as quedas da janela
-```
-
-`--quedas` usa o **menor preço do dia** por (mercado, produto normalizado — sem acento,
-minúsculo), compara as duas últimas leituras de cada produto e lista só quedas reais
-(`agora < antes`), da maior para a menor; altas ficam de fora e produtos sem duas
-leituras na janela também. No exemplo dos encartes de 15 e 18/10/2026 (mesma semana de
-promoção), 229 dos 230 produtos do Atacadão repetiram o preço e só a Toalha de Papel
-baixou R$ 19,98 → R$ 19,90. Nos resultados de `--produto`, o `tipo` vem junto do preço.
-
-O banco guarda uma linha por preço lido (`mercado, dia, pagina, produto, produto_norm,
-preco, ordem, tipo`), uma linha por coleta (`coletas`, com `itens`, `precos` e o tamanho
-dos PDFs/brutos) e o catálogo do site do Examine (`site_produtos`); os PDFs não entram.
-No `run`, o banco só é atualizado se **já existir** (nunca derruba a execução) e o dia é
-substituído inteiro (`registrar_dia`), então rodar duas vezes no mesmo dia não duplica
-nada. As quedas da janela de 30 dias entram no resumo do Telegram quando
-`[historico] quedas_no_resumo > 0` (padrão 3; o bloco está no exemplo de mensagem
-acima). `jornaleiro limpar` reindexa o banco depois de apagar as coletas, para ele não
-apontar para dia removido.
+`www.crescevendas.com/graphql`); o `Origin` enviado é o de `site_url`. Apontar para o
+endpoint do e-commerce dá `Field 'pamphlets' doesn't exist on type 'Query'` — já aconteceu.
 
 ## Estado e a semente do Examine
 
@@ -355,87 +199,120 @@ parte da página desse post, pega os shortcodes recentes, filtra pelas legendas 
 o post passa a ser a nova semente, então cada execução só coleta encartes novos.
 
 Também ficam lá, por mercado (`mercados.<chave>`), o sha256 dos brutos do último envio,
-o dia, as contagens e o flag `enviado` — é o que o `run` usa para não reenviar o mesmo
-encarte (ver "Uso"). A gravação é atômica (arquivo temporário + `os.replace`), então um
+o dia e o flag `enviado` — é o que o `run` usa para não reenviar o mesmo encarte (ver
+"Uso"). A gravação é atômica (arquivo temporário + `os.replace`), então um
 `Ctrl-C` no meio não deixa o JSON pela metade.
 
-No CI, esse mesmo arquivo é restaurado e regravado no branch `estado` a cada run (o
-runner é efêmero); o `data/state.json` da máquina local é independente — veja *Coleta
-diária no GitHub Actions*.
+No container o arquivo vive no volume (`./data`), então é o único estado: não há branch
+nem cópia no CI — veja *Execução contínua em container*. O `data/agenda.json` (ao lado
+dele) guarda `ultima`, `proxima`, `falhas_seguidas` e o batimento `atualizado_em` do
+agendador.
 
 Para forçar o Examine a reavaliar posts antigos, apague as duas chaves (ou o
 `data/state.json`) antes de rodar.
 
-## Coleta diária no GitHub Actions
+## Execução contínua em container (agenda interna)
 
-`.github/workflows/jornaleiro.yml` roda `jornaleiro run` todo dia às 07:00 e às 19:00
-(horário de Brasília; o cron do Actions é UTC e pode atrasar alguns minutos; o run da
-tarde só envia se aparecer encarte novo, pelo mesmo sha256) e também por
-`workflow_dispatch` — o botão *Run workflow* tem as opções `forcar` (reenviar mesmo com
-o encarte idêntico ao último envio) e `sem_envio` (só coleta, sem publicar nada no
-Telegram: valida instalação e downloads sem incomodar o grupo). O run instala o pacote e
-só o **headless shell** do Chromium (`--only-shell`, sem `--with-deps`: as bibliotecas
-de sistema já vêm no `ubuntu-latest`) — ele é necessário para o Assaí e, se não subir, o
-renderer `auto` cai no Jina (`JINA_API_KEY`). Não precisa de tesseract enquanto
-`[precos] ler = false`.
-
-O runner é efêmero: `data/` não sobrevive entre execuções. Por isso o `data/state.json`
-— a memória do "não reenviar o mesmo encarte" e a semente do Examine — fica no branch
-`estado`, restaurado antes do run e atualizado depois (um commit por execução que muda o
-estado; o primeiro estado veio da máquina local). Nenhum PDF vai para o git: os binários
-existem só no runner durante o job e `data/` continua ignorado — o branch `estado` guarda
-apenas o JSON. No fim do run os PDFs do dia sobem como artifact
-(`jornais-<run_number>`, retenção de 7 dias, na seção *Artifacts* da página do run); o
-envio normal continua sendo pelo Telegram. Se um run morrer entre o envio e o commit do
-estado, o próximo pode reenviar o mesmo encarte (duplicata); nunca pula um encarte novo.
-
-### Configuração (uma vez)
-
-1. O environment `producao` é criado sozinho no primeiro run (o job o referencia). Com
-   admin no repositório, crie antes em Settings → Environments e restrinja *Deployment
-   branches* a `main` — sem isso o environment funciona, mas não limita quem pode usá-lo.
-2. No environment, crie os secrets:
-
-   | Secret | Uso | Obrigatório |
-   |---|---|---|
-   | `TELEGRAM_BOT_TOKEN` | envio dos PDFs | sim |
-   | `TELEGRAM_CHAT_ID` | destino no Telegram | sim |
-   | `EXAMINE_TOKEN` | jornal oficial do Examine (`pamphlets`) | não (cai no Instagram) |
-   | `JINA_API_KEY` | renderizador de reserva (sem Chromium) | não |
-
-3. O workflow só referencia `${{ secrets.* }}`; nada fica no repositório. O
-   `GITHUB_TOKEN` do run tem apenas `contents: write` (para o branch `estado`) e expira
-   ao fim do job — não há PAT nem chave SSH no CI. Se um valor vazar, rotacione
-   (`/revoke` no BotFather e regeneração dos tokens) e atualize o `.env` local e o secret
-   no GitHub.
-4. O `main` é protegido por ruleset (PR com squash e histórico linear, resultados do
-   CodeQL): por isso `.github/workflows/codeql.yml` faz parte do projeto — cada PR roda a
-   análise e o merge só libera quando ela termina sem alertas acima do limiar da ruleset
-   (erros e segurança alta ou superior). A ruleset também tem a regra *Restrict updates*
-   ("só quem tem bypass atualiza o ref"), que bloqueia até o merge de PR de quem não está
-   na bypass list — com a lista vazia, quem não é admin recebe `current_user_can_bypass:
-   never` e o merge falha com `Cannot update this protected ref`; desmarcá-la é ação de
-   admin, em Settings → Rules. Já a regra de cobertura da ruleset fica inerte sem o
-   GitHub Code Quality (recurso pago e desligado aqui, em que o upload de Cobertura XML
-   responde 404), então `.github/workflows/testes.yml` só roda o pytest. O
-   `.github/workflows/` também é superfície de ataque: quem consegue mudar o workflow
-   consegue ler os secrets, então revise mudanças nessa pasta.
-
-O primeiro run usa o estado semeado na máquina local; se quiser forçar um reenvio dos
-encartes atuais, use *Run workflow* com `forcar: true`.
-
-### Rodando também na máquina
-
-O CI e a máquina mantêm estados separados. Para não duplicar envios, deixe o envio
-diário com o CI e use o local para depurar (`--no-send`, `--only`, `--forcar`). Para
-puxar o estado do CI antes de um run local:
+`docker compose up -d` sobe um processo só — a imagem publicada no GHCR pelo workflow
+`Imagem` (`ghcr.io/brunoanhaia/jornaleiro:latest`, mais uma tag por commit) —,
+`jornaleiro serve`, que roda o `run` nos horários de `[agenda] horarios` (padrão 07:00 e
+19:00, America/Sao_Paulo).
+Não há cron no container: o loop grava batimentos em `data/agenda.json`, dispara o run
+como subprocesso e faz *catch-up* — se o container subir 07:40, ainda executa o slot das
+07:00 (`tolerancia_min = 90`); às 12:00 não executa mais. O segundo run do dia só envia
+de novo se aparecer encarte novo, pelo mesmo sha256 do `state.json`.
 
 ```bash
-git fetch origin estado && git show origin/estado:state.json > data/state.json
+cp .env.example .env            # preencha TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID
+docker compose pull             # baixa ghcr.io/brunoanhaia/jornaleiro:latest
+docker compose up -d
+docker compose logs -f          # procura "[agenda] proxima execucao: ..."
+docker compose ps               # coluna STATUS mostra o healthcheck (healthy)
 ```
 
-O caminho inverso (publicar o estado local no branch) é o que o workflow faz ao fim de
-cada run; evite fazer os dois em paralelo.
+Se o pacote do GHCR estiver **privado** (repositório privado), autentique antes do `pull`
+com um token de leitura de pacotes: `echo "$TOKEN" | docker login ghcr.io -u <usuario>
+--password-stdin`. Com repositório público o pacote herda a visibilidade e o login é
+desnecessário. Para construir na máquina em vez de puxar (desenvolvimento), o
+`docker-compose.yml` mantém `build: .`: `docker compose up -d --build` gera a mesma tag.
+
+### Isolamento do container
+
+O serviço roda com o mínimo de privilégios, e nada além disso:
+
+| Item | Configuração | Efeito |
+|---|---|---|
+| Usuário | `USER app` (uid 1000) na imagem | nenhum processo roda como root |
+| Rootfs | `read_only: true` | nada é gravado fora dos volumes; só `./data` e `/tmp` |
+| `/tmp` | `tmpfs: /tmp:size=512m,mode=1777` | área temporária em memória (Pillow/img2pdf) |
+| Capabilities | `cap_drop: [ALL]` | nenhuma capability (não precisa de porta <1024, raw socket etc.) |
+| Escalada | `security_opt: no-new-privileges:true` | setuid/setgid não eleva privilégio |
+| Volumes | só `./data:/app/data` | nada do host além do diretório de dados |
+| Rede/pid | padrão do Compose | sem `privileged`, `network_mode: host` nem socket do Docker |
+| Segredos | `env_file: .env` | tokens do Telegram no ambiente do processo, nunca na imagem |
+
+O workflow `Imagem` também é escopo mínimo: `contents: read` no workflow e
+`packages: write` só no job, usando o `GITHUB_TOKEN` do run (sem PAT), sem gatilho de
+`pull_request` — código de PR não recebe token de escrita.
+
+Sem esperar o horário, para testar a instalação:
+
+```bash
+docker compose run --rm jornaleiro serve --agora --no-send   # coleta sem Telegram
+docker compose run --rm jornaleiro serve --agora             # executa agora e envia
+```
+
+O `data/` da máquina é montado em `/app/data`: PDFs, `raw/`, `run.log`, `state.json` e
+`agenda.json` ficam nele (nada binário vai para o git). Rodar o
+`run` na máquina contra o mesmo `data/` compartilha o estado — use `--no-send` para
+depurar sem duplicar envio no grupo.
+
+### Agenda, saúde e falhas
+
+`data/agenda.json` tem `ultima` (`inicio`, `fim`, `codigo`), `proxima` e
+`falhas_seguidas`, além do batimento `atualizado_em` — regravado a cada `batida_s` (30 s)
+durante um run longo. O healthcheck do Compose roda `jornaleiro serve --verificar` e
+reprova se o batimento estiver mais velho que `saude_janela_s` (300 s) ou se houver
+`falhas_limite` (3) execuções seguidas com falha; Docker não reinicia container
+*unhealthy* sozinho, então a saúde aparece em `docker compose ps`.
+
+Quando o run sai com código != 0, a agenda manda uma mensagem no Telegram com o horário,
+o código, a duração, o caminho do `data/<dia>/run.log` e a próxima execução:
+
+```
+Jornaleiro: execucao das 16/11 07:00 falhou (codigo 1) em 412s.
+Log: /app/data/2026-11-16/run.log
+Proxima: 16/11 19:00
+```
+
+SIGTERM/SIGINT (parar o container, `Ctrl-C`) encerram o loop sem aviso de falha e sem
+contar falha no estado. Com `--no-send` o aviso de falha sai só no stderr — teste local
+não mexe no Telegram.
+
+### Retenção automática de 15 dias
+
+Ao fim de cada `run`, o `data/` é podado em `[retencao] dias` (padrão 15, contando hoje):
+as pastas `data/<AAAA-MM-DD>/` mais antigas saem e o SQLite é reindexado. `dias = 0`
+desliga a poda. Para conferir/apagar à mão antes, `jornaleiro limpar` (usa o valor do
+config) e `--dias N`/`--dry-run`.
+
+### Configuração por ambiente
+
+Qualquer chave de qualquer seção aceita `JORNALEIRO__SECAO__CHAVE=valor`; cada segmento
+vira um nível do `config.toml` e o valor é lido como TOML (o que não for TOML entra como
+string crua). A precedência é CLI (`--horarios`) > ambiente > `config.toml` > padrão:
+
+```bash
+JORNALEIRO__AGENDA__HORARIOS='["08:00","20:00"]'
+JORNALEIRO__RETENCAO__DIAS=15
+JORNALEIRO__RENDERER=jina
+JORNALEIRO__MARKETS__ASSAI__ENABLED=false
+```
+
+`JORNALEIRO_CONFIG` (caminho do config) usa um underscore só e não entra no esquema. O ritmo do healthcheck é do
+Docker, não do processo: `JORNALEIRO_HEALTHCHECK_INTERVAL`, `..._TIMEOUT`, `..._RETRIES`
+e `..._START_PERIOD` são interpolados pelo Compose a partir do `.env` ou do ambiente
+(padrões `2m`, `60s`, `2` e `3m`).
 
 ## Testes
 
@@ -443,18 +320,13 @@ cada run; evite fazer os dois em paralelo.
 .venv/bin/python -m pytest -q
 ```
 
-Os testes usam fixtures recortadas das respostas reais (JSON do Assaí, API do
-Atacadão, HTML do Covabra e os dois renders do Instagram), fragmentos sintéticos de
-coordenadas para a leitura por colunas do Atacadão e bancos temporários para o
-histórico — e não acessam a rede. Desde 18/10/2026 também cobrem os utilitários internos
-(HTTP e Telegram com clientes falsos, estado, renderizadores) e a operação (resolução do
-config, `limpar` e `run` com mercados/renderer falsos, frescor/avisos): 111 testes.
-
-Estratégias conhecidas e ainda **não** implementadas: no Assaí, pré-processar a imagem
-(escala/cinza/limiar) e usar o OCR com coordenadas (TSV) para casar nome e preço pela
-posição; no Atacadão, ler os rótulos (`PREÇO VAREJO/ATACADO`, `No app`, `Cartão`) para o
-`tipo` deixar de ser heurística de valor. As duas dependem de medir o ganho antes de
-mexer no parser atual.
+São **104 testes** com fixtures recortadas das respostas reais (JSON do Assaí, API do
+Atacadão, HTML do Covabra, `pamphlets` do Examine e os dois renders do Instagram) e não
+acessam a rede. Cobrem os parsers de mercado, o renderizador (jina com `http` falso), o
+Telegram, o estado, a composição/compressão dos PDFs, a operação (resolução do config,
+`limpar`, poda automática, `run` com mercados/renderer falsos, resumo/avisos) e a agenda
+com relógio/dormir falsos (`devida`/catch-up, batimento, falhas seguidas, overrides de
+ambiente, `serve` sem Telegram com `--no-send`).
 
 ## Licença
 

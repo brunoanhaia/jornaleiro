@@ -114,15 +114,16 @@ def _from_json(ctx: Context, cfg: MarketCfg) -> tuple[list[str], str | None]:
 
 
 def _json_texto(ctx: Context, cfg: MarketCfg) -> str:
-    """Texto do JSON: renderizador (cookies/JS do Imperva) e, se falhar, HTTP direto.
+    """Texto do JSON: HTTP direto e, se falhar, o renderizador (cookies/JS do Imperva).
 
-    O 403 do challenge costuma aparecer num dos dois caminhos; tentar o outro evita
-    perder a coleta quando o Chromium/Jina esta indisponivel ou bloqueado.
+    O HTTP direto e o caminho barato e hoje resolve (medido em 14/11/2026: 200 com
+    108 KB e `Last-Modified` do dia); o renderizador entra quando o challenge Imperva
+    responde 403 ao cliente simples, que e o comportamento intermitente dele.
     """
     erros: list[str] = []
     tentativas = (
-        ("renderer", lambda: ctx.renderer.fetch_json_in_page(_uncached(cfg.json_url), cfg.offers_page)),
         ("http", lambda: _json_direto(cfg)),
+        ("renderer", lambda: ctx.renderer.fetch_json_in_page(_uncached(cfg.json_url), cfg.offers_page)),
     )
     for fonte, buscar in tentativas:
         try:
@@ -139,11 +140,11 @@ def _json_direto(cfg: MarketCfg) -> str:
 
 
 def _offers_html(ctx: Context, cfg: MarketCfg) -> str:
-    """HTML da pagina de ofertas, tentando renderizador e depois HTTP direto."""
+    """HTML da pagina de ofertas: HTTP direto e, se falhar, o renderizador."""
     erros: list[str] = []
     tentativas = (
-        ("renderer", lambda: ctx.renderer.get_text(cfg.offers_page)),
         ("http", lambda: _html_direto(cfg)),
+        ("renderer", lambda: ctx.renderer.get_text(cfg.offers_page)),
     )
     for fonte, buscar in tentativas:
         try:

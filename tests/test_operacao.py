@@ -7,9 +7,10 @@ from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from pypdf import PdfWriter
 
-from jornaleiro import cli, notify, render
+from jornaleiro import agenda, cli, notify, render
 from jornaleiro.model import SP, Asset, MarketResult
 
 
@@ -85,7 +86,6 @@ def roda_run(config: Path, data_dir: Path, only: str, *extras: str, no_send: boo
         "run",
         "--only", only,
         "--sem-comprimir",
-        "--sem-ocr",
         "--config", str(config),
         "--data-dir", str(data_dir),
         *extras,
@@ -272,16 +272,16 @@ def test_validade_fim_entende_formatos_reais() -> None:
     assert cli._validade_fim(None, hoje) is None
 
 
-def test_aviso_de_encarte_vencido_e_queda_suspeita() -> None:
+def test_aviso_de_encarte_vencido_e_reenvio() -> None:
     resultado = MarketResult(
         key="assai", label="Assaí", status="ok", validity="01/01/2020 a 02/01/2020"
     )
-    row = cli.Row(result=resultado, path=Path("x.pdf"), precos=3, fonte="texto")
+    row = cli.Row(result=resultado, path=Path("x.pdf"), pular_envio=True)
 
-    aviso = cli._aviso_do_mercado(row, {"precos": 100, "dia": "2026-10-10"}, date(2026, 10, 18))
+    aviso = cli._aviso_do_mercado(row, {"dia": "2026-10-10"}, date(2026, 10, 18))
 
     assert "encarte vencido em 02/01" in aviso
-    assert "queda suspeita de precos: 3 agora, 100 em 10/10" in aviso
+    assert "nao reenviado: igual ao de 10/10" in aviso
 
 
 def test_sha_dos_assets_muda_com_o_conteudo() -> None:
@@ -293,3 +293,231 @@ def test_sha_dos_assets_muda_com_o_conteudo() -> None:
     assert cli._sha_assets([a]) == mesma_coisa
     assert cli._sha_assets([a]) != cli._sha_assets([b])
     assert cli._sha_assets([]) == ""
+
+
+def test_load_config_aplica_overrides_do_ambiente(tmp_path, monkeypatch) -> None:
+    caminho = tmp_path / "config.toml"
+    caminho.write_text(
+        'renderer = "auto"\ndata_dir = "data"\n\n[agenda]\ntolerancia_min = 90\n\n'
+        "[markets.assai]\nenabled = true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JORNALEIRO__AGENDA__TOLERANCIA_MIN", "15")
+    monkeypatch.setenv("JORNALEIRO__AGENDA__HORARIOS", '["08:00","20:00"]')
+    monkeypatch.setenv("JORNALEIRO__RENDERER", "jina")
+    monkeypatch.setenv("JORNALEIRO__MARKETS__ASSAI__ENABLED", "false")
+    monkeypatch.setenv("JORNALEIRO__DATA_DIR", "/tmp/saida")
+    monkeypatch.setenv("JORNALEIRO__RETENCAO__DIAS", "7")
+    monkeypatch.setenv("JORNALEIRO_CONFIG", "/x")
+    monkeypatch.setenv("JORNALEIRO_NO_SANDBOX", "1")
+
+    config = cli.load_config(caminho)
+
+    assert config["agenda"]["tolerancia_min"] == 15  # inteiro veio do TOML
+    assert config["agenda"]["horarios"] == ["08:00", "20:00"]
+    assert config["renderer"] == "jina"  # string crua: TOML nao aceita `jina`
+    assert config["markets"]["assai"]["enabled"] is False
+    assert config["markets"]["assai"].enabled is False  # MarketCfg continua por atributo
+    assert config["data_dir"] == "/tmp/saida"
+    assert config["retencao"]["dias"] == 7
+    assert "JORNALEIRO_CONFIG" not in config and "jornaleiro_config" not in config
+    assert "no_sandbox" not in config
+
+
+def test_override_do_ambiente_ignora_valor_vazio_e_nome_quebrado(tmp_path, monkeypatch, capsys) -> None:
+    caminho = tmp_path / "config.toml"
+    caminho.write_text('renderer = "auto"\n', encoding="utf-8")
+    monkeypatch.setenv("JORNALEIRO__AGENDA__BATIDA_S", "")
+    monkeypatch.setenv("JORNALEIRO__AGENDA____X", "1")
+
+    config = cli.load_config(caminho)
+
+    assert config == {"renderer": "auto", "data_dir": "data", "agenda": {}, "retencao": {}, "markets": {}}
+    assert "[config] variavel ignorada: JORNALEIRO__AGENDA____X" in capsys.readouterr().err
+
+
+def test_valor_invalido_do_ambiente_estoura_em_quem_consome(tmp_path, monkeypatch, capsys) -> None:
+    caminho = tmp_path / "config.toml"
+    caminho.write_text("", encoding="utf-8")
+    monkeypatch.setenv("JORNALEIRO__AGENDA__BATIDA_S", "0")
+    config = cli.load_config(caminho)
+
+    with pytest.raises(ValueError, match="agenda: batida_s deve ser >= 1"):
+        agenda.parametros(config["agenda"])
+
+
+def test_run_usa_o_renderer_do_ambiente(tmp_path, monkeypatch) -> None:
+    config = prepara_run(
+        tmp_path,
+        monkeypatch,
+        {"assai": mercado_falso("assai", "Assaí Atacadista", pdf_vazio())},
+    )
+    modos: list[object] = []
+    monkeypatch.setattr(
+        render, "build_renderer", lambda modo=None: modos.append(modo) or RendererFalso()
+    )
+    monkeypatch.setenv("JORNALEIRO__RENDERER", "jina")
+
+    assert roda_run(config, tmp_path / "data", "assai") == 0
+    assert modos == ["jina"]
+
+
+def test_limpar_coletas_conta_hoje_na_janela(tmp_path) -> None:
+    data = tmp_path / "data"
+    for nome in ("2026-10-01", "2026-11-01", "2026-11-02", "2026-11-16"):
+        (data / nome).mkdir(parents=True)
+        (data / nome / "x.pdf").write_bytes(b"abc")
+    (data / "raw").mkdir()
+    (data / "state.json").write_text("{}", encoding="utf-8")
+
+    alvos = cli.limpar_coletas(data, 15, hoje=date(2026, 11, 16), dry_run=True)
+
+    assert [pasta.name for pasta, _ in alvos] == ["2026-10-01", "2026-11-01"]
+    assert all(pasta.exists() for pasta, _ in alvos)  # dry-run so lista
+    assert cli.limpar_coletas(tmp_path / "nao-existe", 15) == []
+
+    removidas = cli.limpar_coletas(data, 15, hoje=date(2026, 11, 16))
+
+    assert [pasta.name for pasta, _ in removidas] == ["2026-10-01", "2026-11-01"]
+    assert sorted(pasta.name for pasta in data.iterdir()) == [
+        "2026-11-02",
+        "2026-11-16",
+        "raw",
+        "state.json",
+    ]
+    # dias=0 apaga tudo que nao e de hoje
+    assert [pasta.name for pasta, _ in cli.limpar_coletas(data, 0, hoje=date(2026, 11, 16), dry_run=True)] == [
+        "2026-11-02"
+    ]
+
+
+def test_config_retencao_le_a_secao_e_valida() -> None:
+    assert cli.config_retencao({}) == 15
+    assert cli.config_retencao({"retencao": {"dias": 3}}) == 3
+    with pytest.raises(ValueError, match="retencao: dias deve ser >= 0"):
+        cli.config_retencao({"retencao": {"dias": -1}})
+    with pytest.raises(ValueError, match="retencao: dias invalido"):
+        cli.config_retencao({"retencao": {"dias": "abc"}})
+
+
+def test_limpar_sem_dias_usa_o_config(tmp_path, capsys) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('data_dir = "data"\n\n[retencao]\ndias = 5\n', encoding="utf-8")
+    data = tmp_path / "data"
+    (data / "2020-01-01").mkdir(parents=True)
+    (data / "2020-01-01" / "x.pdf").write_bytes(b"abc")
+    hoje = data / datetime.now(SP).date().isoformat()
+    hoje.mkdir()
+
+    args = argparse.Namespace(dias=None, dry_run=False, data_dir=str(data), config=str(config))
+
+    assert cli.cmd_limpar(args) == 0
+    assert not (data / "2020-01-01").exists()
+    assert hoje.exists()
+    assert "retendo 5 dia(s)" in capsys.readouterr().out
+
+
+def test_run_poda_coletas_antigas(tmp_path, monkeypatch, capsys) -> None:
+    config = prepara_run(
+        tmp_path,
+        monkeypatch,
+        {"assai": mercado_falso("assai", "Assaí Atacadista", pdf_vazio())},
+    )
+    config.write_text(
+        config.read_text(encoding="utf-8") + "\n[retencao]\ndias = 1\n", encoding="utf-8"
+    )
+    data_dir = tmp_path / "data"
+    velha = data_dir / "2020-01-01"
+    velha.mkdir(parents=True)
+    (velha / "x.pdf").write_bytes(b"abc")
+
+    assert roda_run(config, data_dir, "assai") == 0
+
+    dia = datetime.now(SP).date().isoformat()
+    assert not velha.exists()
+    assert (data_dir / dia / "assai.pdf").exists()  # o PDF do dia continua
+    assert "[retencao] 1 coleta(s) removida(s)" in capsys.readouterr().out
+
+
+class AgendaFalsa:
+    """Agenda de mentira: guarda os argumentos e nao abre subprocesso."""
+
+    def __init__(self, **kwargs) -> None:
+        self.kwargs = kwargs
+        AgendaFalsa.ultima = self
+
+    def executar_agora(self) -> int:
+        return 1
+
+    def rodar(self, max_execucoes: int | None = None) -> int:
+        return 0
+
+
+def serve_args(config: Path, data_dir: Path, *extras: str) -> argparse.Namespace:
+    comando = ["serve", "--agora", "--config", str(config), "--data-dir", str(data_dir), *extras]
+    return cli.build_parser().parse_args(comando)
+
+
+def prepara_serve(tmp_path, monkeypatch) -> tuple[Path, Path]:
+    config = tmp_path / "config.toml"
+    config.write_text('data_dir = "data"\n', encoding="utf-8")
+    monkeypatch.setattr(cli.agenda, "Agenda", AgendaFalsa)
+    monkeypatch.setattr(cli.agenda, "instalar_sinais", lambda: None)
+    return config, tmp_path / "data"
+
+
+def test_serve_sem_envio_nao_usa_o_telegram(tmp_path, monkeypatch, capsys) -> None:
+    telegram = TelegramFalso()
+    prepara_telegram(monkeypatch, telegram)
+    config, data_dir = prepara_serve(tmp_path, monkeypatch)
+
+    assert cli.cmd_serve(serve_args(config, data_dir, "--no-send")) == 1
+
+    fila = AgendaFalsa.ultima
+    assert fila.kwargs["estado_path"] == data_dir / "agenda.json"
+    assert "--no-send" in fila.kwargs["comando"]
+
+    fila.kwargs["avisar"]("Jornaleiro: falhou")
+
+    assert telegram.mensagens == []
+    assert "Jornaleiro: falhou" in capsys.readouterr().err
+
+
+def test_serve_avisa_falha_no_telegram(tmp_path, monkeypatch) -> None:
+    telegram = TelegramFalso()
+    prepara_telegram(monkeypatch, telegram)
+    config, data_dir = prepara_serve(tmp_path, monkeypatch)
+
+    assert cli.cmd_serve(serve_args(config, data_dir)) == 1
+    AgendaFalsa.ultima.kwargs["avisar"]("Jornaleiro: falhou")
+
+    assert telegram.mensagens == ["Jornaleiro: falhou"]
+
+
+def test_serve_aviso_que_falha_nao_derruba_o_loop(tmp_path, monkeypatch, capsys) -> None:
+    prepara_telegram(monkeypatch, TelegramFalso())
+
+    class TelegramQuebrado:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def send_message(self, _texto: str) -> dict:
+            raise RuntimeError("telegram fora do ar")
+
+    monkeypatch.setattr(notify, "Telegram", TelegramQuebrado)
+    config, data_dir = prepara_serve(tmp_path, monkeypatch)
+
+    cli.cmd_serve(serve_args(config, data_dir))
+    AgendaFalsa.ultima.kwargs["avisar"]("Jornaleiro: falhou")
+
+    assert "aviso nao enviado: RuntimeError: telegram fora do ar" in capsys.readouterr().err
+
+
+def test_serve_sem_credenciais_recusa_o_envio(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(cli, "load_dotenv", lambda *_, **__: None)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
+    config, data_dir = prepara_serve(tmp_path, monkeypatch)
+
+    assert cli.cmd_serve(serve_args(config, data_dir)) == 2
+    assert "defina TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID" in capsys.readouterr().err

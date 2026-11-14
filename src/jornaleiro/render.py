@@ -1,23 +1,22 @@
-"""Renderizadores: Playwright (Chromium) com fallback para o r.jina.ai.
+"""Renderizador: r.jina.ai (HTTP) para as paginas que precisam de JS.
 
-Os dois caminhos devolvem "texto renderizado" para as mesmas regexes dos mercados:
-Playwright devolve HTML pos-JS (``page.content()``); jina devolve markdown do DOM
-pos-JS. `fetch_json_in_page` existe para URLs que so respondem com os cookies de
-uma visita previa (challenge Imperva do Assai).
+O projeto nao usa navegador. O caminho normal dos mercados e HTTP direto; quando a
+pagina exige JavaScript ou responde ao cliente simples com challenge (caso do Assai),
+o fallback e o [r.jina.ai](https://r.jina.ai), que devolve o DOM ja renderizado em
+markdown — sem Chromium/Firefox, sem Playwright e sem download de browser na imagem.
+
+`JinaRenderer` mantem a mesma interface de antes (`get_text`, `fetch_json_in_page`,
+`fetch_bytes_in_page`, `close`), entao os mercados nao mudaram.
 """
 
 from __future__ import annotations
 
 import os
-import sys
 from typing import Protocol
-from urllib.parse import urlsplit
 
 from . import http
 
-MODES = ("auto", "playwright", "jina")
-
-_PLAYWRIGHT_OK: bool | None = None
+MODES = ("auto", "jina")  # `auto` = jina: nao ha mais navegador para escolher
 
 
 class Renderer(Protocol):
@@ -36,62 +35,9 @@ class Renderer(Protocol):
         ...
 
 
-class PlaywrightRenderer:
-    name = "playwright"
-
-    def __init__(self) -> None:
-        from playwright.sync_api import sync_playwright
-
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch()
-        self._ctx = self._browser.new_context(
-            user_agent=http.UA,
-            locale="pt-BR",
-            viewport={"width": 1366, "height": 900},
-        )
-        self._page = self._ctx.new_page()
-        self._origem: str | None = None
-
-    def get_text(self, url: str) -> str:
-        self._page.goto(url, wait_until="domcontentloaded")
-        self._page.wait_for_timeout(3000)
-        self._origem = _origem(url)
-        return self._page.content()
-
-    def fetch_json_in_page(self, url: str, warmup_url: str) -> str:
-        self._aquecer(warmup_url)
-        return self._page.evaluate(
-            "async u => await (await fetch(u, {credentials: 'same-origin'})).text()", url
-        )
-
-    def fetch_bytes_in_page(self, url: str, warmup_url: str) -> bytes:
-        """Baixa um binario navegando na mesma sessao (cookies/fingerprint do site)."""
-        self._aquecer(warmup_url)
-        response = self._page.goto(url, wait_until="commit")
-        if response is None:
-            raise RuntimeError(f"sem resposta do navegador para {url}")
-        if response.status >= 400:
-            raise RuntimeError(f"HTTP {response.status} no navegador para {url}")
-        return response.body()
-
-    def _aquecer(self, warmup_url: str) -> None:
-        """Carrega a pagina que resolve o challenge, uma vez por origem."""
-        origem = _origem(warmup_url)
-        if self._origem == origem:
-            return
-        self._page.goto(warmup_url, wait_until="domcontentloaded")
-        self._page.wait_for_timeout(3000)
-        self._origem = origem
-
-    def close(self) -> None:
-        try:
-            self._ctx.close()
-            self._browser.close()
-        finally:
-            self._pw.stop()
-
-
 class JinaRenderer:
+    """r.jina.ai: renderiza a pagina do lado do servidor e devolve o texto/markdown."""
+
     name = "jina"
 
     def __init__(self, api_key: str | None = None) -> None:
@@ -123,39 +69,9 @@ class JinaRenderer:
         return None
 
 
-def _origem(url: str) -> str:
-    """Esquema + host, para saber se a pagina atual ja e do site certo."""
-    partes = urlsplit(url)
-    return f"{partes.scheme}://{partes.netloc}"
-
-
-def playwright_available() -> bool:
-    """Probe memoizado: importa playwright e faz launch()/close() de verdade."""
-    global _PLAYWRIGHT_OK
-    if _PLAYWRIGHT_OK is None:
-        try:
-            from playwright.sync_api import sync_playwright
-
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch()
-                browser.close()
-            _PLAYWRIGHT_OK = True
-        except Exception as exc:  # noqa: BLE001 - qualquer falha cai para o jina
-            print(
-                f"[render] playwright indisponivel ({type(exc).__name__}: {exc}); usando jina",
-                file=sys.stderr,
-            )
-            _PLAYWRIGHT_OK = False
-    return _PLAYWRIGHT_OK
-
-
 def build_renderer(mode: str = "auto") -> Renderer:
     if mode not in MODES:
         raise ValueError(f"renderer invalido: {mode!r} (use {'|'.join(MODES)})")
-    renderer: Renderer
-    if mode == "playwright" or (mode == "auto" and playwright_available()):
-        renderer = PlaywrightRenderer()
-    else:
-        renderer = JinaRenderer()
+    renderer: Renderer = JinaRenderer()
     print(f"renderer={renderer.name}")
     return renderer

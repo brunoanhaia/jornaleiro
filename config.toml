@@ -1,4 +1,4 @@
-renderer = "auto"        # auto | playwright | jina
+renderer = "auto"        # auto | jina (nao ha navegador: jina = r.jina.ai)
 data_dir = "data"
 
 [comprimir]              # comprime os PDFs antes de gravar/enviar (paginas em A4)
@@ -9,19 +9,16 @@ qualidade = 60
 largura_max = 1400       # usado no modo padrao
 achatar_mascara = true   # compoe a mascara suave no fundo branco (paginas CMYK)
 
-[precos]                 # leitura de precos dos encartes em imagem (Assai, Examine)
-ler = false              # false = run so coleta os jornais (validade vem no resumo, sem precos)
-enviar = false           # true = manda tambem os CSVs de precos junto dos PDFs no Telegram
-ocr = true
-ocr_bin = ""             # vazio: PATH, depois ~/.local/share/tesseract/usr/bin/tesseract
-ocr_tessdata = ""        # vazio: TESSDATA_PREFIX, depois instalacao local
-ocr_ld_library_path = "~/.local/share/tesslibs:~/.local/share/crlibs"
-ocr_idioma = "por"
-ocr_psm = 12             # 12 = texto esparso (melhor recall medido nos encartes)
+[agenda]                 # agendador interno do container (`jornaleiro serve`)
+horarios = ["07:00", "19:00"]   # America/Sao_Paulo; aceita tambem "07:00,19:00" no ambiente
+tolerancia_min = 90      # sobe ate 90 min depois do horario ainda recupera a execucao perdida
+batida_s = 30            # intervalo maximo entre gravacoes de atualizado_em em data/agenda.json
+espera_max_s = 30        # teto de cada sono do loop (segundos)
+saude_janela_s = 300     # healthcheck reprova se a batida estiver mais velha (>= 2*batida_s)
+falhas_limite = 3        # execucoes seguidas com falha que reprovam o healthcheck
 
-[historico]               # historico de precos em SQLite (indice dos CSVs; `jornaleiro historico`)
-db = ""                   # vazio: data/historico.sqlite; caminho relativo fica ao lado do config
-quedas_no_resumo = 3      # quedas de preco que o run mostra no resumo (0 = desliga)
+[retencao]               # poda automatica de data/ ao fim de cada run
+dias = 15                # dias de coletas mantidos (inclui hoje); 0 desliga a poda
 
 [markets.assai]
 enabled = true
@@ -52,8 +49,5 @@ enabled = true
 seed_url = "https://www.instagram.com/examinesupermercados/p/Deh37qhjcMZ/"
 caption_filter = "Ofertas válidas"
 max_posts = 12
-precos_site = true                                        # le os precos do e-commerce
-site_url = "https://superexaminerc.crescevendas.com/ecommerce"
-site_graphql = "https://www.crescevendas.com/ecommerce/graphql"   # catalogo (products)
-site_graphql_jornal = "https://www.crescevendas.com/graphql"      # jornal (pamphlets)
-site_categorias_max = 0                                   # 0 = todas as categorias
+site_url = "https://superexaminerc.crescevendas.com/ecommerce"          # Origin do jornal
+site_graphql_jornal = "https://www.crescevendas.com/graphql"            # jornal (pamphlets)
