@@ -17,8 +17,9 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from .. import http, site
+from .. import http
 from ..model import Asset, Context, MarketCfg, MarketResult, describe_error
 
 KEY = "examine"
@@ -28,6 +29,8 @@ SEED_KEY = "examine_last_post_url"
 SEEN_KEY = "examine_seen"
 
 POST_URL = "https://www.instagram.com/p/{code}/"
+GRAPHQL_JORNAL = "https://www.crescevendas.com/graphql"
+_FOLHETOS = """query { pamphlets { file id title } }"""  # jornal oficial (precisa do Bearer)
 IMAGE_HEADERS = {"Accept": "image/jpeg,image/webp,*/*"}
 
 _SHORTCODE = re.compile(r"/examinesupermercados/(?:p|reel)/([A-Za-z0-9_-]+)/")
@@ -63,13 +66,56 @@ class Post:
 
 def fetch(ctx: Context, cfg: MarketCfg) -> MarketResult:
     """Encarte do Examine: jornal oficial do site (com token) e, sem token, o Instagram."""
-    oficial = fetch_site(ctx, cfg)
+    oficial = fetch_site(cfg)
     if oficial is not None:
         return oficial
     return fetch_instagram(ctx, cfg)
 
 
-def fetch_site(ctx: Context, cfg: MarketCfg) -> MarketResult | None:
+@dataclass(frozen=True)
+class Folheto:
+    """Uma pagina do jornal oficial: `url` absoluta + titulo da campanha."""
+
+    id: str
+    titulo: str
+    url: str
+
+
+def folhetos(cfg: MarketCfg, token: str) -> list[Folheto]:
+    """Paginas do jornal oficial (`pamphlets`), na ordem que a API devolve."""
+    url = str(cfg.get("site_graphql_jornal", GRAPHQL_JORNAL))
+    origem = str(cfg.get("site_url", "") or "https://superexaminerc.crescevendas.com").rstrip("/")
+    resposta = http.post_json(
+        url,
+        {"query": _FOLHETOS},
+        headers={
+            "Content-Type": "application/json",
+            "Origin": origem,
+            "Referer": origem + "/",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    dados = resposta.json()
+    if dados.get("errors"):
+        raise RuntimeError(f"graphql: {dados['errors']}"[:220])
+    partes = urlsplit(url)
+    base = f"{partes.scheme}://{partes.netloc}"
+    paginas: list[Folheto] = []
+    for item in dados.get("data", {}).get("pamphlets") or []:
+        arquivo = str(item.get("file") or "")
+        if not arquivo:
+            continue
+        paginas.append(
+            Folheto(
+                id=str(item.get("id")),
+                titulo=(item.get("title") or "").strip(),
+                url=arquivo if arquivo.startswith("http") else base + arquivo,
+            )
+        )
+    return paginas
+
+
+def fetch_site(cfg: MarketCfg) -> MarketResult | None:
     """`pamphlets` da crescevendas: o jornal de ofertas oficial, pagina por pagina.
 
     Precisa do Bearer do clube (`EXAMINE_TOKEN` no .env). Devolve None quando nao ha
@@ -79,22 +125,33 @@ def fetch_site(ctx: Context, cfg: MarketCfg) -> MarketResult | None:
     if not token:
         return None
 
-    cliente = site.Site(
-        str(cfg.get("site_graphql_jornal", site.GRAPHQL_PADRAO)),
-        origin=str(cfg.get("site_url", "") or "https://superexaminerc.crescevendas.com"),
-        token=token,
-    )
     try:
-        folhetos = cliente.folhetos()
+        paginas = folhetos(cfg, token)
     except Exception as exc:  # noqa: BLE001 - sem token valido, o Instagram resolve
         print(f"[examine] jornal oficial indisponivel ({describe_error(exc)}); usando Instagram")
         return None
-    if not folhetos:
+    if not paginas:
         return None
 
+    assets, falhas = _baixar_paginas(paginas)
+    if not assets:
+        detalhe = f" ({'; '.join(falhas)})" if falhas else ""
+        print(f"[examine] nenhuma pagina do jornal oficial baixou{detalhe}; usando Instagram")
+        return None
+    return MarketResult(
+        key=KEY,
+        label=LABEL,
+        status="ok",
+        assets=assets,
+        note=_nota_do_jornal(paginas, len(assets), falhas),
+    )
+
+
+def _baixar_paginas(paginas: list[Folheto]) -> tuple[list[Asset], list[str]]:
+    """Baixa cada pagina do jornal; falha de uma nao derruba as outras."""
     assets: list[Asset] = []
     falhas: list[str] = []
-    for folheto in folhetos:
+    for folheto in paginas:
         try:
             conteudo = http.get_bytes(folheto.url, headers=IMAGE_HEADERS)
         except Exception as exc:  # noqa: BLE001 - uma pagina ruim nao derruba o jornal
@@ -108,22 +165,16 @@ def fetch_site(ctx: Context, cfg: MarketCfg) -> MarketResult | None:
                 suffix=Path(folheto.url).suffix or ".jpeg",
             )
         )
-    if not assets:
-        detalhe = f" ({'; '.join(falhas)})" if falhas else ""
-        print(f"[examine] nenhuma pagina do jornal oficial baixou{detalhe}; usando Instagram")
-        return None
+    return assets, falhas
 
-    titulos = sorted({folheto.titulo for folheto in folhetos if folheto.titulo})
-    note = f"jornal oficial do site ({len(assets)} pags: {'; '.join(titulos)})"
+
+def _nota_do_jornal(paginas: list[Folheto], baixadas: int, falhas: list[str]) -> str:
+    """Resumo do jornal oficial: campanhas e paginas que nao baixaram."""
+    titulos = sorted({folheto.titulo for folheto in paginas if folheto.titulo})
+    note = f"jornal oficial do site ({baixadas} pags: {'; '.join(titulos)})"
     if falhas:
         note += f" - {len(falhas)} pagina(s) sem download: {'; '.join(falhas)}"
-    return MarketResult(
-        key=KEY,
-        label=LABEL,
-        status="ok",
-        assets=assets,
-        note=note,
-    )
+    return note
 
 
 def fetch_instagram(ctx: Context, cfg: MarketCfg) -> MarketResult:

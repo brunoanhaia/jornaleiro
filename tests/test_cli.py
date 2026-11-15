@@ -5,58 +5,56 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from jornaleiro.cli import Row, config_ler_precos, describe, summary_message
+from jornaleiro.cli import Row, describe, documentos, summary_message
 from jornaleiro.model import MarketResult
 
 DIA = date(2026, 10, 15)
 
 
-def row(key: str, label: str, *, validity: str | None = None, note: str | None = None, **campos) -> Row:
+def row(
+    key: str, label: str, *, validity: str | None = None, note: str | None = None, **campos
+) -> Row:
     return Row(
         result=MarketResult(key=key, label=label, status="ok", validity=validity, note=note),
         **campos,
     )
 
 
-def test_resumo_traz_precos_por_mercado() -> None:
+def test_resumo_traz_uma_linha_por_mercado() -> None:
     rows = [
         row("atacadao", "Atacadão", count=6, unit="folhetos", validity="12/10 a 19/10",
-            path=Path("data/2026-10-15/atacadao.pdf"), itens=224, precos=486, fonte="texto"),
-        row("assai", "Assaí Atacadista", count=8, unit="pags", validity="Preços válidos para 15/10/2026",
-            path=Path("data/2026-10-15/assai.pdf"), itens=30, precos=40, fonte="ocr"),
+            path=Path("data/2026-10-15/atacadao.pdf")),
+        row("assai", "Assaí Atacadista", count=8, unit="pags",
+            validity="Preços válidos para 15/10/2026", path=Path("data/2026-10-15/assai.pdf")),
     ]
 
     texto = summary_message(DIA, rows)
 
     assert "Encartes Rio Claro - 15/10/2026" in texto
-    assert "Atacadão - 6 folhetos - 12/10 a 19/10 | 224 itens/486 precos" in texto
-    assert "Assaí Atacadista - 8 pags - Preços válidos para 15/10/2026 | 30 itens/40 precos (OCR)" in texto
+    assert "Atacadão - 6 folhetos - 12/10 a 19/10" in texto
+    assert "Assaí Atacadista - 8 pags - Preços válidos para 15/10/2026" in texto
     assert texto.endswith("Falhas: nenhuma")
 
 
-def test_resumo_mostra_catalogo_do_site() -> None:
+def test_resumo_usa_a_nota_quando_nao_ha_validade() -> None:
     rows = [
-        row("examine", "Examine", count=1, validity="15/10 a 18/10/2026",
-            path=Path("data/2026-10-15/examine.pdf"),
-            csv=Path("data/2026-10-15/precos/examine.csv"), itens=11124, precos=11124, fonte="site")
+        row("examine", "Examine", count=1, note="jornal oficial do site (1 pag: Vinhos)",
+            path=Path("data/2026-10-15/examine.pdf"))
     ]
 
     texto = summary_message(DIA, rows)
 
-    assert "Examine - 1 pag - 15/10 a 18/10/2026 | 11124 produtos (site)" in texto
-
-
-def test_resumo_avisa_quando_falta_ocr() -> None:
-    rows = [row("examine", "Examine", count=1, path=Path("data/2026-10-15/examine.pdf"), fonte="sem-ocr")]
-
-    texto = summary_message(DIA, rows)
-
-    assert "Examine - 1 pag | precos: OCR indisponivel (tesseract nao encontrado)" in texto
+    assert "Examine - 1 pag - jornal oficial do site (1 pag: Vinhos)" in texto
 
 
 def test_resumo_marca_mercado_que_falhou() -> None:
-    falha = Row(result=MarketResult(key="savegnago", label="Savegnago", status="failed", error="HTTP 404"))
-    rows = [falha, row("covabra", "Covabra", count=4, validity="15/10 - 21/10", path=Path("data/covabra.pdf"))]
+    falha = Row(
+        result=MarketResult(key="savegnago", label="Savegnago", status="failed", error="HTTP 404")
+    )
+    rows = [
+        falha,
+        row("covabra", "Covabra", count=4, validity="15/10 - 21/10", path=Path("data/covabra.pdf")),
+    ]
 
     texto = summary_message(DIA, rows)
 
@@ -64,73 +62,42 @@ def test_resumo_marca_mercado_que_falhou() -> None:
     assert texto.endswith("Falhas: Savegnago")
 
 
-def test_documentos_levam_pdf_e_csv_de_precos() -> None:
-    from jornaleiro.cli import documentos
-
+def test_resumo_mostra_o_aviso_do_mercado() -> None:
     rows = [
-        row("atacadao", "Atacadão", count=6, unit="folhetos", validity="12/10 a 19/10",
-            path=Path("data/2026-10-15/atacadao.pdf"),
-            csv=Path("data/2026-10-15/precos/atacadao.csv"), itens=224, precos=486, fonte="texto"),
-        row("examine", "Examine", count=1, path=Path("data/2026-10-15/examine.pdf"), fonte="sem-ocr"),
+        row("assai", "Assaí", count=8, path=Path("data/assai.pdf"),
+            aviso="encarte vencido em 02/01")
+    ]
+
+    texto = summary_message(DIA, rows)
+
+    assert "Assaí - 8 pag | AVISO: encarte vencido em 02/01" in texto
+
+
+def test_documentos_levam_so_os_pdfs_que_vão() -> None:
+    rows = [
+        row("atacadao", "Atacadão", count=6, unit="folhetos", path=Path("data/atacadao.pdf")),
+        row("assai", "Assaí", count=8, path=Path("data/assai.pdf"), pular_envio=True),
+        Row(result=MarketResult(key="covabra", label="Covabra", status="failed", error="HTTP 404")),
     ]
 
     itens = documentos(rows)
 
-    assert [nome for nome, _, _ in itens] == ["Atacadão", "Atacadão (precos)", "Examine"]
-    assert itens[1][1].name == "atacadao.csv"
-    assert itens[1][2] == "Atacadão - 224 itens/486 precos"
-    assert [nome for nome, _, _ in documentos(rows, enviar_precos=False)] == ["Atacadão", "Examine"]
+    assert [nome for nome, _, _ in itens] == ["Atacadão"]
+    assert itens[0][1].name == "atacadao.pdf"
+    assert itens[0][2] == "Atacadão - sem validade - 6 folhetos"
 
 
-def test_log_mostra_economia_e_precos() -> None:
+def test_log_mostra_tamanho_e_economia() -> None:
     linha = describe(
         row("assai", "Assaí", count=8, unit="pags", path=Path("data/assai.pdf"),
-            antes=8_920_000, depois=3_010_000, itens=30, precos=40, fonte="ocr")
+            antes=8_920_000, depois=3_010_000)
     )
 
     assert "8 pags -> data/assai.pdf" in linha
     assert "pdf 8.51 MB -> 2.87 MB (-66%)" in linha
-    assert linha.endswith("30 itens/40 precos (OCR)")
 
 
-def test_config_ler_precos_padrao_e_desligado() -> None:
-    assert config_ler_precos({}) is True
-    assert config_ler_precos({"precos": {"ler": False}}) is False
+def test_log_de_falha_mostra_o_erro() -> None:
+    falha = Row(result=MarketResult(key="assai", label="Assaí", status="failed", error="HTTP 403"))
 
-
-def test_resumo_sem_leitura_de_precos_mostra_so_a_validade() -> None:
-    rows = [
-        row("covabra", "Covabra", count=4, unit="pags", validity="15/10 - 21/10",
-            path=Path("data/2026-10-18/covabra.pdf"), fonte="desligado"),
-        row("savegnago", "Savegnago", count=4, unit="pags",
-            note="arquivo de 16/10 18:15 (America/Sao_Paulo)",
-            path=Path("data/2026-10-18/savegnago.pdf"), fonte="desligado"),
-    ]
-
-    texto = summary_message(DIA, rows)
-
-    assert "Covabra - 4 pags - 15/10 - 21/10" in texto
-    assert "Savegnago - 4 pags - arquivo de 16/10 18:15 (America/Sao_Paulo)" in texto
-    assert "itens" not in texto and "precos" not in texto
-
-
-def test_rotulo_fonte_marca_ocr_e_fontes_mistas() -> None:
-    from jornaleiro.cli import _rotulo_fonte
-
-    assert _rotulo_fonte("texto") == ""
-    assert _rotulo_fonte("nenhuma") == ""
-    assert _rotulo_fonte("ocr") == " (OCR)"
-    assert _rotulo_fonte("texto+ocr") == " (texto+OCR)"
-    assert _rotulo_fonte("sem-ocr") == ""
-    assert _rotulo_fonte("texto+sem-ocr") == " (OCR indisponivel em parte)"
-
-
-def test_resumo_mostra_falha_na_leitura_de_precos() -> None:
-    rows = [
-        row("atacadao", "Atacadão", count=6, unit="folhetos", validity="12/10 a 19/10",
-            path=Path("data/2026-10-18/atacadao.pdf"), erro_precos="RuntimeError: decodificacao"),
-    ]
-
-    texto = summary_message(DIA, rows)
-
-    assert "Atacadão - 6 folhetos - 12/10 a 19/10 | precos: falha (RuntimeError: decodificacao)" in texto
+    assert describe(falha) == "falha: HTTP 403"
