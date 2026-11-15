@@ -83,8 +83,10 @@ Limites do Telegram: documento ≤ 50 MB (o Atacadão para de acumular folhetos 
 
 ## Container (agenda interna)
 
-A imagem é publicada no GHCR pelo workflow `Imagem` (`ghcr.io/brunoanhaia/jornaleiro:latest`
-e uma tag por commit). No host:
+A imagem é publicada no GHCR pelo workflow `Imagem`. A versão segue *Conventional
+Commits* desde a última tag git: `feat` sobe o minor, `feat!`/`BREAKING CHANGE` sobe o
+major e o resto sobe o patch (a tag `vX.Y.Z` é criada no repositório a cada release). Cada
+build publica `X.Y.Z`, `X.Y`, `latest` e `sha-<commit>`; o `pull` usa `latest`. No host:
 
 ```bash
 cp .env.example .env         # tokens do Telegram
@@ -106,6 +108,10 @@ O `data/` da máquina é o único estado: PDFs, `raw/`, `state.json` e `agenda.j
 binário no git). O dono precisa ser o uid 1000 (usuário `app` da imagem); caso contrário o
 run falha (`sudo chown -R 1000:1000 data`). Rodar `run` local contra o mesmo `data/`
 compartilha o estado — use `--no-send` para não duplicar envio.
+
+Para fixar uma versão exata em vez de `latest`, troque a tag no `docker-compose.yml`
+(`ghcr.io/brunoanhaia/jornaleiro:0.2.0`) — `podman/docker inspect` mostra a versão no label
+`org.opencontainers.image.version`.
 
 Isolamento do serviço no compose: `USER app` (uid 1000), `read_only` com `tmpfs` em `/tmp`,
 `cap_drop: [ALL]`, `no-new-privileges`, único volume `./data` (sem socket do Docker, sem
