@@ -91,7 +91,10 @@ relevante antes de mexer em parsers, compressão ou container, e atualize-o junt
   todos falharem, `2` para erro de config.
 - `Dockerfile`/`docker-compose.yml` — imagem `python:3.13-slim` + `tzdata` (sem
   navegador), usuário `app` (uid 1000), `./data` no volume e healthcheck
-  `jornaleiro serve --verificar`. O compose endurece o container: `read_only`,
+  `jornaleiro serve --verificar`. O compose **não** tem `env_file` nem `build` de
+  propósito: no Portainer não existe `.env` ao lado do compose (`env file ... not found`)
+  e não há contexto de build numa stack colada; as variáveis entram por interpolação
+  `${VAR:-}` e o build local é `docker build -t <imagem> .`. O compose endurece o container: `read_only`,
   `tmpfs /tmp`, `cap_drop` com todas as capabilities, `no-new-privileges`
   e só o volume de `data/`. O `data/` do host é o único estado (sem branch nem
   artifact).
