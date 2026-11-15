@@ -116,6 +116,10 @@ nem `build`, só a imagem publicada. No Portainer:
 Esse formato evita o erro `env file /data/compose/<id>/v1/.env not found`, que acontece
 quando o compose referencia um `.env` que o Portainer não cria.
 
+Se o container subir e cair com `PermissionError: ... /app/data/.agenda.json...`, o
+diretório do bind está com outro dono: `sudo chown -R 1000:1000 /srv/jornaleiro/data` (o
+`jornaleiro` detecta isso na largada e sai com `data/ nao e gravavel ... uid 1000`).
+
 O container roda `jornaleiro serve`: dorme, dispara o `run` nos horários de
 `[agenda] horarios` (07:00 e 19:00, America/Sao_Paulo) e faz catch-up dentro de
 `tolerancia_min` (subir 07:40 ainda executa o slot das 07:00; às 12:00 não). O estado fica

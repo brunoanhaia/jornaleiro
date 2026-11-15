@@ -530,3 +530,46 @@ def test_serve_sem_credenciais_recusa_o_envio(tmp_path, monkeypatch, capsys) -> 
 
     assert cli.cmd_serve(serve_args(config, data_dir)) == 2
     assert "defina TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID" in capsys.readouterr().err
+
+
+def test_run_recusa_data_dir_sem_escrita(tmp_path, monkeypatch, capsys) -> None:
+    """Container roda como uid 1000: data/ de outro dono falha com mensagem, não traceback."""
+    config = prepara_run(
+        tmp_path,
+        monkeypatch,
+        {"assai": mercado_falso("assai", "Assaí Atacadista", pdf_vazio())},
+    )
+    data_dir = tmp_path / "somente-leitura"
+    data_dir.mkdir()
+    data_dir.chmod(0o500)
+    try:
+        assert roda_run(config, data_dir, "assai") == 2
+    finally:
+        data_dir.chmod(0o700)
+
+    erro = capsys.readouterr().err
+    assert "nao e gravavel" in erro
+    assert "uid 1000" in erro and "chown" in erro
+
+
+def test_serve_recusa_data_dir_sem_escrita(tmp_path, capsys) -> None:
+    config = tmp_path / "config.toml"
+    config.write_text('data_dir = "data"\n', encoding="utf-8")
+    data_dir = tmp_path / "travado"
+    data_dir.mkdir()
+    data_dir.chmod(0o500)
+    args = argparse.Namespace(
+        config=str(config),
+        data_dir=str(data_dir),
+        no_send=True,
+        horarios=None,
+        agora=True,
+        verificar=False,
+    )
+    try:
+        assert cli.cmd_serve(args) == 2
+    finally:
+        data_dir.chmod(0o700)
+
+    erro = capsys.readouterr().err
+    assert "[agenda]" in erro and "nao e gravavel" in erro
