@@ -50,11 +50,16 @@ relevante antes de mexer em parsers, compressão ou container, e atualize-o junt
   fica fora do esquema.
   As `JORNALEIRO_HEALTHCHECK_*` são do Compose (intervalo/timeout/retries/start_period),
   não do processo.
-- CI: `.github/workflows/imagem.yml` constrói e publica a imagem no GHCR
-  (`ghcr.io/brunoanhaia/jornaleiro:latest` + tag por commit) em push na `main` e por
-  `workflow_dispatch`; escopo mínimo (`contents: read` no workflow, `packages: write` só
-  no job, `GITHUB_TOKEN`, sem gatilho de PR). O `docker-compose.yml` usa essa imagem
-  (`build: .` fica para build local com `--build`).
+- CI: `.github/workflows/imagem.yml` constrói e publica a imagem no GitHub Container
+  Registry (GHCR) em push na `main`
+  e por `workflow_dispatch`. A versão sai de *Conventional Commits* desde a última tag
+  git (`feat` = minor, `feat!`/`BREAKING CHANGE` = major, resto = patch): o job cria a tag
+  `vX.Y.Z` e publica `X.Y.Z`, `X.Y`, `latest` e `sha-<commit>`, com
+  `--build-arg VERSAO` virando o label `org.opencontainers.image.version`. Permissões:
+  `contents: read` no workflow, `contents: write` + `packages: write` só no job — o
+  `contents: write` existe apenas para empurrar a tag do release; sem Personal Access
+  Token (PAT) e sem gatilho de PR. O `docker-compose.yml` usa essa imagem (`build: .`
+  fica para build local).
 - CI: o `main` só aceita PR (squash, histórico linear) com resultado do CodeQL
   (`.github/workflows/codeql.yml`, PR/push/semanal); `.github/workflows/testes.yml` roda o
   pytest em PR/push. A ruleset "protect default branch" tem a regra *Restrict updates*

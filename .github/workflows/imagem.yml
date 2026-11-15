@@ -1,10 +1,13 @@
-# Constroi a imagem e publica no GHCR (ghcr.io/<owner>/jornaleiro).
+# Constroi a imagem e publica no GHCR com a versao derivada dos commits.
 #
-# Escopo minimo: `contents: read` no workflow e `packages: write` so no
-# job — e o
-# `GITHUB_TOKEN` do run, sem PAT. Nao roda em `pull_request`: codigo de PR nao
-# recebe token de escrita. O host que roda a coleta so precisa de
-# `docker compose pull`.
+# Versao por Conventional Commits desde a ultima tag git (`vX.Y.Z`):
+# `feat` sobe o minor, `feat!`/`BREAKING CHANGE` sobe o major, o resto sobe
+# o patch. A tag git e o registro da versao (o proximo build parte dela) e a
+# imagem recebe `X.Y.Z`, `X.Y`, `latest` e `sha-<commit>`.
+#
+# Permissoes: `contents: read` no workflow; no job, `contents: write` (so
+# para empurrar a tag do release) e `packages: write` (GHCR). Sem PAT e sem
+# gatilho de `pull_request`: codigo de PR nao recebe token de escrita.
 name: Imagem
 
 on:
@@ -25,13 +28,75 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - name: Baixar o repositorio
         uses: actions/checkout@v7
         with:
+          # historico e tags completos: a versao sai do log desde a ultima tag
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Calcular a versao (Conventional Commits)
+        id: versao
+        env:
+          QUEBRA: '^[a-z]+(\([^)]*\))?!:|BREAKING[ -]CHANGE'
+          FEAT: '^feat(\([^)]*\))?:'
+        run: |
+          set -euo pipefail
+          ultima="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -z "$ultima" ]; then
+            base="0.0.0"
+            escopo="HEAD"
+          else
+            base="${ultima#v}"
+            escopo="${ultima}..HEAD"
+          fi
+          mensagens="$(git log --format='%s%n%b' "$escopo")"
+          if [ -z "$mensagens" ]; then
+            # reexecucao do mesmo commit: republica a versao que ja existe
+            tipo="nenhuma"
+          elif printf '%s\n' "$mensagens" | grep -Eq "$QUEBRA"; then
+            tipo="maior"
+          elif printf '%s\n' "$mensagens" | grep -Eq "$FEAT"; then
+            tipo="menor"
+          else
+            tipo="correcao"
+          fi
+          maior="${base%%.*}"
+          resto="${base#*.}"
+          menor="${resto%%.*}"
+          correcao="${resto#*.}"
+          case "$tipo" in
+            maior) maior=$((maior + 1)); menor=0; correcao=0 ;;
+            menor) menor=$((menor + 1)); correcao=0 ;;
+            correcao) correcao=$((correcao + 1)) ;;
+          esac
+          versao="${maior}.${menor}.${correcao}"
+          if git rev-parse -q --verify "refs/tags/v${versao}" >/dev/null; then
+            tag_nova="nao"
+          else
+            tag_nova="sim"
+          fi
+          {
+            echo "versao=${versao}"
+            echo "serie=${maior}.${menor}"
+            echo "tipo=${tipo}"
+            echo "tag_nova=${tag_nova}"
+          } >> "$GITHUB_OUTPUT"
+          echo "versao ${versao} (${tipo}, tag nova: ${tag_nova})"
+
+      - name: Criar a tag do release
+        if: steps.versao.outputs.tag_nova == 'sim'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOVA: v${{ steps.versao.outputs.versao }}
+        run: |
+          set -euo pipefail
+          git tag -a "$NOVA" -m "release ${NOVA#v}"
+          url="https://x-access-token:${GITHUB_TOKEN}"
+          git push "${url}@github.com/${GITHUB_REPOSITORY}.git" "$NOVA"
 
       - name: Preparar o buildx
         # v3
@@ -45,6 +110,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Montar as tags da imagem
+        id: tags
+        env:
+          VERSAO: ${{ steps.versao.outputs.versao }}
+          SERIE: ${{ steps.versao.outputs.serie }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          img="ghcr.io/${GITHUB_REPOSITORY}"
+          {
+            echo "lista<<TAGS"
+            echo "${img}:${VERSAO}"
+            echo "${img}:${SERIE}"
+            echo "${img}:latest"
+            echo "${img}:sha-${COMMIT}"
+            echo "TAGS"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Construir e publicar
         # v6
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
@@ -55,8 +137,8 @@ jobs:
           push: true
           # `build: .` no compose usa a mesma tag: build local e pull do
           # registry se encontram no mesmo nome, sem imagem divergente
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          tags: ${{ steps.tags.outputs.lista }}
+          build-args: |
+            VERSAO=${{ steps.versao.outputs.versao }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
