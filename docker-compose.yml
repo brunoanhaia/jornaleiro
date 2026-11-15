@@ -1,13 +1,22 @@
 services:
   jornaleiro:
-    # imagem publicada pelo workflow `Imagem` (GHCR); `build: .` mantem o build
-    # local com a mesma tag (docker compose up -d --build)
+    # imagem publicada pelo workflow `Imagem` (GHCR). Para build local:
+    #   docker build -t ghcr.io/brunoanhaia/jornaleiro:latest .
     image: ghcr.io/brunoanhaia/jornaleiro:latest
-    build: .
     init: true
     restart: unless-stopped
     shm_size: "1gb"
-    env_file: .env
+    # variaveis vem do ambiente do Compose (`.env` local ou as "environment
+    # variables" da stack no Portainer); sem `env_file`, a stack nao quebra se
+    # o arquivo nao existir ao lado do compose
+    # valores vem do ambiente do Compose (`.env` local ou "environment
+    # variables" da stack no Portainer); sem `env_file` a stack nao exige um
+    # arquivo `.env` ao lado do compose
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      JINA_API_KEY: ${JINA_API_KEY:-}
+      EXAMINE_TOKEN: ${EXAMINE_TOKEN:-}
     volumes:
       - ./data:/app/data
     # o processo roda como `app` (uid 1000) na imagem, sem capabilities e sem

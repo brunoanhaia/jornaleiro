@@ -90,11 +90,35 @@ build publica `X.Y.Z`, `X.Y`, `latest` e `sha-<commit>`; o `pull` usa `latest`. 
 
 ```bash
 cp .env.example .env         # tokens do Telegram
-docker compose pull          # ou `up -d --build` para construir na máquina
+docker compose pull
 docker compose up -d
 docker compose logs -f       # "[agenda] proxima execucao: ..."
 docker compose ps            # healthcheck (healthy)
 ```
+
+Build local (sem registry): `docker build -t ghcr.io/brunoanhaia/jornaleiro:latest .`
+e depois o mesmo `docker compose up -d`.
+
+### Portainer
+
+A stack **não** precisa de um arquivo `.env`: o `docker-compose.yml` não usa `env_file`
+nem `build`, só a imagem publicada. No Portainer:
+
+1. *Stacks → Add stack*, cole o conteúdo do `docker-compose.yml`.
+2. Em **Environment variables** (modo avançado), defina `TELEGRAM_BOT_TOKEN`,
+   `TELEGRAM_CHAT_ID` e, se quiser, `JINA_API_KEY` e `EXAMINE_TOKEN` — eles entram no
+   container pela interpolação do Compose.
+3. No volume, prefira um caminho absoluto do host (`/srv/jornaleiro/data:/app/data`): o
+   `./data` do compose resolve para a pasta da stack dentro do Portainer.
+4. Qualquer ajuste `JORNALEIRO__SECAO__CHAVE` precisa ser acrescentado à lista
+   `environment:` da stack (os quatro nomes acima já estão lá).
+
+Esse formato evita o erro `env file /data/compose/<id>/v1/.env not found`, que acontece
+quando o compose referencia um `.env` que o Portainer não cria.
+
+Se o container subir e cair com `PermissionError: ... /app/data/.agenda.json...`, o
+diretório do bind está com outro dono: `sudo chown -R 1000:1000 /srv/jornaleiro/data` (o
+`jornaleiro` detecta isso na largada e sai com `data/ nao e gravavel ... uid 1000`).
 
 O container roda `jornaleiro serve`: dorme, dispara o `run` nos horários de
 `[agenda] horarios` (07:00 e 19:00, America/Sao_Paulo) e faz catch-up dentro de

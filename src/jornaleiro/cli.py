@@ -23,6 +23,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Self
 
 from dotenv import load_dotenv
@@ -67,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
         return args.handler(args)
     except KeyboardInterrupt:  # pragma: no cover - interrupcao manual
         return 130
+    except OSError as exc:  # data/ sem permissao, disco cheio: mensagem unica
+        print(f"jornaleiro: {exc}", file=sys.stderr)
+        return 1
 
 
 class _Espelho(io.TextIOBase):
@@ -190,6 +194,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         renderer=args.renderer or config["renderer"],
     )
     try:
+        exigir_data_dir(rodada.data_dir)
+    except OSError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    try:
         dias_retencao = config_retencao(config)
     except ValueError as exc:
         print(exc, file=sys.stderr)
@@ -291,6 +300,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if args.horarios:
             params = replace(params, slots=tuple(agenda.horarios(args.horarios)))
     except ValueError as exc:
+        print(f"[agenda] {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        exigir_data_dir(data_dir)
+    except OSError as exc:
         print(f"[agenda] {exc}", file=sys.stderr)
         return 2
 
@@ -630,6 +645,25 @@ def _falhou_no_envio(row: Row, falhas: list[str]) -> bool:
     return any(
         nome == row.result.label or nome.startswith(f"{row.result.label} (") for nome in falhas
     )
+
+
+def exigir_data_dir(data_dir: Path) -> None:
+    """Garante que `data_dir` existe e e gravavel por este usuario.
+
+    No container o processo roda como `app` (uid 1000); se o `data/` do host vier de
+    outro dono, o `run` e a agenda falhariam no primeiro `save()` com um traceback. A
+    checagem transforma isso numa mensagem unica no stderr.
+    """
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(dir=data_dir, prefix=".escrita.", mode="w"):
+            pass
+    except OSError as exc:
+        raise OSError(
+            f"{data_dir} nao e gravavel ({exc.strerror or exc}); "
+            "o dono precisa ser o uid 1000 do container: "
+            "sudo chown -R 1000:1000 <data>"
+        ) from exc
 
 
 def localizar_config(explicito: str | None) -> Path:
